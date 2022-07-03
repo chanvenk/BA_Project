@@ -25,4 +25,3 @@ git commit -m "Added a new model to the code"
 
 #### Step4: Once committed, push the code. 
 ```
-To 
