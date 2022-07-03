@@ -1,7 +1,7 @@
 # BA_Project
 
 ### How to use this repo for our BA Project
-#### STEP1 : Clone the repo and switch into the repo
+#### STEP1 : Open Terminal (not R), Clone the repo and switch into the repo 
 ```
 git clone https://github.com/chandrasekar5195/BA_Project
 cd BA_Project
