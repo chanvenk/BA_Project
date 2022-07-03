@@ -30,4 +30,9 @@ git push origin chandra_branch
 ```
 
 #### Step5: Once you've pushed your changes to your branch, we can discuss and merge it with the main branch
-
+```
+#first checkout the main branch
+git checkout main
+#merge your branch with the main branch
+git merge chandra_branch
+```
