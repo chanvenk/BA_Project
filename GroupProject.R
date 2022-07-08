@@ -169,14 +169,8 @@ workflow_RF_up <-
 workflow_RF_up
 
 grid_RF <- expand.grid(mtry = c(3,4,5))
-
-set.seed(100)
-CV_10_up <- churn_train %>% 
-  vfold_cv(v = 10)
-CV_10_up
-
 tuned_RF_up <- workflow_RF_up %>% 
-  tune::tune_grid(resamples = CV_10_up,
+  tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
                   metrics = metric_set(accuracy, roc_auc, f_meas))
 
@@ -230,13 +224,8 @@ workflow_RF_down
 
 grid_RF <- expand.grid(mtry = c(3,4,5))
 
-set.seed(100)
-CV_10_down <- churn_train %>% 
-  vfold_cv(v = 10)
-CV_10_down
-
 tuned_RF_down <- workflow_RF_down %>% 
-  tune::tune_grid(resamples = CV_10_down,
+  tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
                   metrics = metric_set(accuracy, roc_auc, f_meas))
 
