@@ -10,7 +10,7 @@ install.packages("tidyverse","pacman","dplyr","ggplot2")
 pacman::p_load(tidyverse, lubridate, # Tidy data science
                tidymodels, # Tidy Machine Learning
                skimr, GGally, ggstatsplot, Hmisc, broom, # EDA
-               plotly, DT, doParallel, parsnip, themis # Interactive Data Display
+               plotly, DT, doParallel, parsnip, themis, ranger # Interactive Data Display
 )
 
 doParallel::registerDoParallel()
@@ -95,7 +95,7 @@ recipe_RF <-
          data = churn_train) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
-library(ranger)
+
 model_RF <- 
   rand_forest() %>% 
   set_args(mtry = tune()) %>% 
@@ -154,7 +154,7 @@ recipe_RF_up<-
   step_upsample(churn)
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
-library(ranger)
+
 model_RF_up <- 
   rand_forest() %>% 
   set_args(mtry = tune()) %>% 
@@ -168,7 +168,6 @@ workflow_RF_up <-
 
 workflow_RF_up
 
-grid_RF <- expand.grid(mtry = c(3,4,5))
 tuned_RF_up <- workflow_RF_up %>% 
   tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
@@ -208,7 +207,7 @@ recipe_RF_down<-
   step_downsample(churn) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
-library(ranger)
+
 model_RF_down <- 
   rand_forest() %>% 
   set_args(mtry = tune()) %>% 
@@ -222,8 +221,6 @@ workflow_RF_down <-
 
 workflow_RF_down
 
-grid_RF <- expand.grid(mtry = c(3,4,5))
-
 tuned_RF_down <- workflow_RF_down %>% 
   tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
@@ -233,28 +230,53 @@ tuned_RF_results_down <- tuned_RF_down %>%
   collect_metrics()
 tuned_RF_results_down
 
-parameters_tuned_RF <- tuned_RF %>% 
+parameters_tuned_RF_down <- tuned_RF_down %>% 
   select_best(metric = "roc_auc")
-parameters_tuned_RF
+parameters_tuned_RF_down
 
-finalized_workflow_RF <- workflow_RF %>% 
-  finalize_workflow(parameters_tuned_RF)
-finalized_workflow_RF
+finalized_workflow_RF_down <- workflow_RF_down %>% 
+  finalize_workflow(parameters_tuned_RF_down)
+finalized_workflow_RF_down
 
-fit_RF <- finalized_workflow_RF %>% 
+fit_RF_down <- finalized_workflow_RF_down %>% 
   last_fit(churn_split)
-fit_RF
+fit_RF_down
 
-performance_RF <- fit_RF %>% 
+performance_RF_down <- fit_RF_down %>% 
   collect_metrics()
-performance_RF
+performance_RF_down
 
-predictions_RF <- fit_RF %>% 
+predictions_RF_down <- fit_RF_down %>% 
   collect_predictions()
-predictions_RF
+predictions_RF_down
 
 
 # Combined Results from all random forrest iterations
-tuned_RF_results
-tuned_RF_results_up
-tuned_RF_results_down
+performance_RF
+performance_RF_up
+performance_RF_down
+
+predictions_RF_down <- predictions_RF_down %>% 
+  mutate(algo = "Random Forrest with downsampling")
+
+predictions_RF_up <- predictions_RF_up %>% 
+  mutate(algo = "Random Forrest with upsampling")
+
+predictions_RF <- predictions_RF %>% 
+  mutate(algo = "Random Forrest without any up/downsampling")
+
+comparing_predictions <- bind_rows(predictions_RF, 
+                                    predictions_RF_down,
+                                    predictions_RF_up)
+comparing_predictions
+comparing_predictions %>% 
+  count(algo)
+
+comparing_predictions %>%
+  group_by(algo) %>% # Say hello to group_by()
+  roc_curve(truth = churn, 
+            .pred_Yes) %>%
+  autoplot() +
+  ggthemes::scale_color_fivethirtyeight() +
+  labs(title = "Comparing different models",
+       color = "Prediction Tools")
