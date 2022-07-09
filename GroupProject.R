@@ -23,7 +23,7 @@ churn_cleaned <- churn_df %>%
   filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
          & avg_frequency_login_days != "Error" & gender != "Unknown") %>% 
   drop_na() %>% 
-  slice(1:10000) %>% 
+#  slice(1:10000) %>% 
   mutate(age_with_company = difftime(curr_date,joining_date, units = "days"),
          across(c(age_with_company,last_visit_time),as.numeric)) %>% 
   select(-medium_of_operation, -internet_option, 
@@ -38,39 +38,6 @@ churn_cleaned <- churn_cleaned %>%
   select(churn, age, avg_time_spent, points_in_wallet,
          gender, age_with_company, avg_transaction_value, region_category,
          membership_category, used_special_discount, avg_frequency_login_days)
-
-# EDA ((NEED TO WORK ON THIS)) ####
-## Planning
-is.na(churn_df)
-EDA_recipe <- 
-  recipe(formula = churn ~ .,data = churn_cleaned) %>% 
-  step_normalize(all_numeric_predictors()) %>%  # setting Ms at 0; SDs at 1 %>% 
-  step_dummy(all_nominal_predictors())
-
-## Execution
-
-EDA_baked <- 
-  EDA_recipe %>% # plan 
-  prep() %>% # for calculation
-  bake(new_data = churn_cleaned) 
-EDA_baked
-skim(EDA_baked)
-
-
-
-## 1. Correlation matrix using Hmisc:: & DT::
-EDA_baked
-EDA_baked %>% 
-  as.matrix(.) %>% 
-  rcorr(.) %>% 
-  tidy(.) %>% 
-  rename(var1 = column1, 
-         var2 = column2,
-         CORR = estimate) %>% 
-  mutate(absCORR = abs(CORR)) %>% 
-  filter(var1 == "churn" | 
-           var2 == "churn") %>% 
-  DT::datatable()
 
 # Splitting the data ----
 set.seed(100)
@@ -265,13 +232,10 @@ predictions_RF_up <- predictions_RF_up %>%
 predictions_RF <- predictions_RF %>% 
   mutate(algo = "Random Forrest without any up/downsampling")
 
+# Drawing the ROC-AUC curve between multiple models
 comparing_predictions <- bind_rows(predictions_RF, 
                                     predictions_RF_down,
                                     predictions_RF_up)
-comparing_predictions
-comparing_predictions %>% 
-  count(algo)
-
 comparing_predictions %>%
   group_by(algo) %>% # Say hello to group_by()
   roc_curve(truth = churn, 
