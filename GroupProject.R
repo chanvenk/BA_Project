@@ -23,7 +23,6 @@ churn_cleaned <- churn_df %>%
   filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
          & avg_frequency_login_days != "Error" & gender != "Unknown") %>% 
   drop_na() %>% 
-#  slice(1:10000) %>% 
   mutate(age_with_company = difftime(curr_date,joining_date, units = "days"),
          across(c(age_with_company,last_visit_time),as.numeric)) %>% 
   select(-medium_of_operation, -internet_option, 
@@ -38,9 +37,11 @@ churn_cleaned <- churn_cleaned %>%
   select(churn, age, avg_time_spent, points_in_wallet,
          gender, age_with_company, avg_transaction_value, region_category,
          membership_category, used_special_discount, avg_frequency_login_days)
-
+set.seed(100)
+churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),10000),]
 # Splitting the data ----
 set.seed(100)
+
 churn_split <- churn_cleaned %>% 
   initial_split(prop = 0.8)
 
