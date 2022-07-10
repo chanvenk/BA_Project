@@ -135,7 +135,7 @@ recipe_RF_up<-
            membership_category + used_special_discount + 
            avg_frequency_login_days,
          data = churn_train) %>% 
-  step_upsample(churn)
+  step_upsample(churn) %>%
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
 
