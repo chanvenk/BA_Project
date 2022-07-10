@@ -16,6 +16,7 @@ pacman::p_load(tidyverse, lubridate, # Tidy data science
 doParallel::registerDoParallel()
 #dataset_fileid <- "1xRtAU4csPPQCfu7TsbCvSxXxMm_xj69lemUeMJFVRso"
 #churn <- read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", dataset_fileid))
+
 churn_df <- read_csv("churn_dataset_train.csv")
 curr_date <- as.Date("2022-07-01")
 
@@ -23,14 +24,17 @@ churn_cleaned <- churn_df %>%
   filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
          & avg_frequency_login_days != "Error" & gender != "Unknown") %>% 
   drop_na() %>% 
-  mutate(age_with_company = difftime(curr_date,joining_date, units = "days"),
-         across(c(age_with_company,last_visit_time),as.numeric)) %>% 
+  mutate(age_with_company = difftime(curr_date,joining_date, units = "days")) %>% 
   select(-medium_of_operation, -internet_option, 
          -offer_application_preference, -feedback,
          -referral_id, -customer_id, -security_no, -Name) %>% 
-  mutate(churn = ifelse(churn_risk_score >=3, "Yes", "No")) %>% 
+  mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>% 
   complete() %>% 
   dplyr::mutate_all(as.factor) %>% 
+  dplyr::mutate(across(c(
+    age, avg_time_spent, points_in_wallet,
+    age_with_company, avg_transaction_value,
+    avg_frequency_login_days),as.numeric)) %>% 
   mutate(churn1 = fct_relevel(churn, "Yes"))
 
 churn_cleaned <- churn_cleaned %>% 
@@ -38,7 +42,18 @@ churn_cleaned <- churn_cleaned %>%
          gender, age_with_company, avg_transaction_value, region_category,
          membership_category, used_special_discount, avg_frequency_login_days)
 set.seed(100)
-churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),10000),]
+skim(churn_cleaned)
+#churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),10000),]
+table(churn_cleaned$churn)
+
+# EDA using ggapirs ----
+library(GGally)
+churn_cleaned %>% 
+  .[ ,-1] %>% # row , column
+  select(churn, where(is.numeric)) %>% 
+  ggpairs() + 
+  theme_linedraw()
+
 # Splitting the data ----
 set.seed(100)
 
@@ -61,6 +76,7 @@ recipe_RF <-
            membership_category + used_special_discount + 
            avg_frequency_login_days,
          data = churn_train) %>% 
+  
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
 
@@ -82,7 +98,7 @@ set.seed(100)
 CV_10 <- churn_train %>% 
   vfold_cv(v = 10)
 CV_10
-
+gc()
 tuned_RF <- workflow_RF %>% 
   tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
@@ -223,7 +239,18 @@ predictions_RF_down
 performance_RF
 performance_RF_up
 performance_RF_down
-
+perf_table <- performance_RF %>% 
+  mutate(performance_RF_up$.estimate) %>% 
+  mutate(performance_RF_down$.estimate) %>% 
+  select(-.estimator,-.config) 
+column_names <- c("Metric","W/o Sampling","UpSampling","Downsampling")
+colnames(perf_table) <- column_names
+perf_table
+### Output from Chandra's computer
+#Metric   `W/o Sampling` UpSampling Downsampling
+#<chr>             <dbl>      <dbl>        <dbl>
+#  1 accuracy          0.871      0.874        0.876
+#2 roc_auc           0.954      0.952        0.951
 predictions_RF_down <- predictions_RF_down %>% 
   mutate(algo = "Random Forrest with downsampling")
 
