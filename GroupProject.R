@@ -10,7 +10,8 @@ install.packages("tidyverse","pacman","dplyr","ggplot2")
 pacman::p_load(tidyverse, lubridate, # Tidy data science
                tidymodels, # Tidy Machine Learning
                skimr, GGally, ggstatsplot, Hmisc, broom, # EDA
-               plotly, DT, doParallel, parsnip, themis, ranger # Interactive Data Display
+               plotly, DT, doParallel, parsnip, themis, ranger,
+               ggpubr, vip# Interactive Data Display
 )
 
 doParallel::registerDoParallel()
@@ -25,8 +26,8 @@ churn_cleaned <- churn_df %>%
          & avg_frequency_login_days != "Error" & gender != "Unknown") %>% 
   drop_na() %>% 
   mutate(age_with_company = difftime(curr_date,joining_date, units = "days")) %>% 
-  select(-medium_of_operation, -internet_option, 
-         -offer_application_preference, -feedback,
+  select(-medium_of_operation, 
+        -feedback,
          -referral_id, -customer_id, -security_no, -Name) %>% 
   mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>% 
   complete() %>% 
@@ -40,7 +41,8 @@ churn_cleaned <- churn_df %>%
 churn_cleaned <- churn_cleaned %>% 
   select(churn, age, avg_time_spent, points_in_wallet,
          gender, age_with_company, avg_transaction_value, region_category,
-         membership_category, used_special_discount, avg_frequency_login_days)
+         membership_category, used_special_discount, avg_frequency_login_days,
+         internet_option, offer_application_preference)
 set.seed(100)
 skim(churn_cleaned)
 #churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),10000),]
@@ -49,10 +51,27 @@ table(churn_cleaned$churn)
 # EDA using ggapirs ----
 library(GGally)
 churn_cleaned %>% 
-  .[ ,-1] %>% # row , column
   select(churn, where(is.numeric)) %>% 
-  ggpairs() + 
-  theme_linedraw()
+  ggpairs(.,aes(color = churn),
+          lower = list(continuous = wrap("smooth",
+                                         alpha = 0.25,
+                                         size = 0.2)
+                  )
+  ) + 
+  theme_bw()
+## Correlation values 
+churn_cleaned %>% 
+  select(churn, where(is.numeric)
+  ) %>% 
+  mutate(churn = as.numeric(churn),
+         churn = ifelse(churn == 1, 1, 0)
+  ) %>% 
+  as.matrix(.) %>% 
+  Hmisc::rcorr(.) %>% 
+  broom::tidy(.) %>% 
+  mutate(strength = abs(estimate)
+  ) %>% 
+  datatable()
 
 # Splitting the data ----
 set.seed(100)
@@ -74,7 +93,8 @@ recipe_RF <-
   recipe(churn ~ age + avg_time_spent + points_in_wallet + gender + 
            age_with_company + avg_transaction_value + region_category +
            membership_category + used_special_discount + 
-           avg_frequency_login_days,
+           avg_frequency_login_days + internet_option + 
+           offer_application_preference,
          data = churn_train) %>% 
   
   step_normalize(all_numeric_predictors()) %>% 
@@ -98,7 +118,7 @@ set.seed(100)
 CV_10 <- churn_train %>% 
   vfold_cv(v = 10)
 CV_10
-gc()
+
 tuned_RF <- workflow_RF %>% 
   tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
@@ -120,6 +140,7 @@ fit_RF <- finalized_workflow_RF %>%
   last_fit(churn_split)
 fit_RF
 
+
 performance_RF <- fit_RF %>% 
   collect_metrics()
 performance_RF
@@ -133,9 +154,10 @@ recipe_RF_up<-
   recipe(churn ~ age + avg_time_spent + points_in_wallet + gender + 
            age_with_company + avg_transaction_value + region_category +
            membership_category + used_special_discount + 
-           avg_frequency_login_days,
+           avg_frequency_login_days + internet_option + 
+           offer_application_preference,
          data = churn_train) %>% 
-  step_upsample(churn) %>%
+  step_upsample(churn) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
 
@@ -175,7 +197,7 @@ fit_RF_up
 
 performance_RF_up <- fit_RF_up %>% 
   collect_metrics()
-performance_RF
+performance_RF_up
 
 predictions_RF_up <- fit_RF_up %>% 
   collect_predictions()
@@ -186,7 +208,8 @@ recipe_RF_down<-
   recipe(churn ~ age + avg_time_spent + points_in_wallet + gender + 
            age_with_company + avg_transaction_value + region_category +
            membership_category + used_special_discount + 
-           avg_frequency_login_days,
+           avg_frequency_login_days + internet_option + 
+           offer_application_preference,
          data = churn_train) %>% 
   step_downsample(churn) %>% 
   step_normalize(all_numeric_predictors()) %>% 
@@ -272,3 +295,75 @@ comparing_predictions %>%
   ggthemes::scale_color_fivethirtyeight() +
   labs(title = "Comparing different models",
        color = "Prediction Tools")
+
+# XGBoost ----
+
+# Confusion Matrix ----
+CM_builder <- function(data, outcome)
+{ 
+  {data} %>% 
+    conf_mat({outcome}, .pred_class) %>% 
+    pluck(1) %>% 
+    as_tibble() %>% 
+    mutate(cm_colors = ifelse(Truth == "Yes" & Prediction == "Yes", "True Positive",
+                              ifelse(Truth == "Yes" & Prediction == "No", "False Negative",
+                                     ifelse(Truth == "No" & Prediction == "Yes", 
+                                            "False Positive", 
+                                            "True Negative")
+                              )
+    )
+    ) %>% 
+    ggplot(aes(x = Prediction, y = Truth)) + 
+    geom_tile(aes(fill = cm_colors), show.legend = F) +
+    scale_fill_manual(values = c("True Positive" = "green",
+                                 "False Negative" = "red",
+                                 "False Positive" = "red",
+                                 "True Negative" = "green")
+    ) + 
+    geom_text(aes(label = n), color = "white", size = 10) + 
+    geom_label(aes(label = cm_colors), vjust = 2
+    ) + 
+    theme_fivethirtyeight() + 
+    theme(axis.title = element_text()
+    ) # + 
+  # labs(title = "Your First Confusion Matrix")
+}
+
+CM_RF <- CM_builder(predictions_RF, "churn")
+CM_RF_Up <- CM_builder(predictions_RF_up, "churn")
+CM_RF_Down <- CM_builder(predictions_RF_down, "churn")
+# To see each of the plots, run the commands below :
+CM_RF
+CM_RF_Up
+CM_RF_Down
+
+# Extracting feature importance ----
+feature_importance_extractor <- function(workflow_data, full_dataset)
+{
+  finalized_model <- {workflow_data} %>% fit({full_dataset})
+  
+  model_summary <- pull_workflow_fit(finalized_model)$fit
+  
+  feature_importance <- data.frame(importance = model_summary$variable.importance) %>% 
+    rownames_to_column("feature") %>% 
+    as_tibble() %>% 
+    mutate(feature = as.factor(feature))
+  
+  feature_importance %>% 
+    ggplot(aes(x = importance, y = reorder(feature, importance), fill = importance)) +
+    geom_col(show.legend = F) +
+    scale_fill_gradient(low = "deepskyblue1", high = "deepskyblue4") +
+    scale_x_continuous(expand = c(0, 0)) +
+    labs(
+      y = NULL,
+      title = "Feature (Variable) Importance for Churn Prediction") + 
+    ggthemes::theme_fivethirtyeight()
+}
+feature_imp_RF <- feature_importance_extractor(workflow_RF, churn_cleaned)
+feature_imp_RF_up <- feature_importance_extractor(workflow_RF_up, churn_cleaned)
+feature_imp_RF_down <- feature_importance_extractor(workflow_RF_down, churn_cleaned)
+
+# To see feature importance for each workflow run the commands below 
+feature_imp_RF
+feature_imp_RF_up
+feature_imp_RF_down
