@@ -6,7 +6,7 @@ setwd(working_dir)
 
 #Installing packages ----
 # importing packages
-install.packages("tidyverse","pacman","dplyr","ggplot2")
+#install.packages("tidyverse","pacman","dplyr","ggplot2")
 pacman::p_load(tidyverse, lubridate, # Tidy data science
                tidymodels, # Tidy Machine Learning
                skimr, GGally, ggstatsplot, Hmisc, broom, # EDA
@@ -15,19 +15,16 @@ pacman::p_load(tidyverse, lubridate, # Tidy data science
 )
 
 doParallel::registerDoParallel()
-#dataset_fileid <- "1xRtAU4csPPQCfu7TsbCvSxXxMm_xj69lemUeMJFVRso"
-#churn <- read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", dataset_fileid))
-
 churn_df <- read_csv("churn_dataset_train.csv")
 curr_date <- as.Date("2022-07-01")
 
 churn_cleaned <- churn_df %>% 
   filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
-         & avg_frequency_login_days != "Error" & gender != "Unknown") %>% 
+         & avg_frequency_login_days != "Error" & gender != "Unknown" 
+         & joined_through_referral != "?" & churn_risk_score > 0) %>% 
   drop_na() %>% 
   mutate(age_with_company = difftime(curr_date,joining_date, units = "days")) %>% 
   select(-medium_of_operation, 
-        -feedback,
          -referral_id, -customer_id, -security_no, -Name) %>% 
   mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>% 
   complete() %>% 
@@ -39,14 +36,11 @@ churn_cleaned <- churn_df %>%
   mutate(churn1 = fct_relevel(churn, "Yes"))
 
 churn_cleaned <- churn_cleaned %>% 
-  select(churn, age, avg_time_spent, points_in_wallet,
-         gender, age_with_company, avg_transaction_value, region_category,
-         membership_category, used_special_discount, avg_frequency_login_days,
-         internet_option, offer_application_preference)
+  select(churn, points_in_wallet, membership_category, avg_transaction_value,
+         avg_time_spent, age_with_company, age, avg_frequency_login_days)
 set.seed(100)
 skim(churn_cleaned)
-#churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),10000),]
-table(churn_cleaned$churn)
+churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),3000),]
 
 # EDA using ggapirs ----
 library(GGally)
@@ -79,8 +73,6 @@ set.seed(100)
 churn_split <- churn_cleaned %>% 
   initial_split(prop = 0.8)
 
-## Executing
-
 churn_train <- 
   churn_split %>% 
   training() 
@@ -88,217 +80,41 @@ churn_train <-
 churn_test <- 
   churn_split %>% 
   testing() # 20%
-# Random Forreset Workflowwithout any up/down sampling ----
-recipe_RF <- 
-  recipe(churn ~ age + avg_time_spent + points_in_wallet + gender + 
-           age_with_company + avg_transaction_value + region_category +
-           membership_category + used_special_discount + 
-           avg_frequency_login_days + internet_option + 
-           offer_application_preference,
-         data = churn_train) %>% 
-  
-  step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
 
-model_RF <- 
-  rand_forest() %>% 
-  set_args(mtry = tune()) %>% 
-  set_engine("ranger", importance = "impurity") %>% 
-  set_mode("classification")
-
-workflow_RF <- 
-  workflow() %>% 
-  add_recipe(recipe_RF) %>% 
-  add_model(model_RF)
-workflow_RF
-
-grid_RF <- expand.grid(mtry = c(3,4,5))
-
+## Splitting the data into cross validation sets ----
 set.seed(100)
 CV_10 <- churn_train %>% 
-  vfold_cv(v = 10)
-CV_10
+  vfold_cv(v = 10, strata = churn)
 
-tuned_RF <- workflow_RF %>% 
-  tune::tune_grid(resamples = CV_10,
-                  grid = grid_RF,
-                  metrics = metric_set(accuracy, roc_auc, f_meas))
+# Function to run the models ----
+workflow_generator <- function(var_recipe, var_model)
+{
+    workflow() %>% 
+    add_recipe({var_recipe}) %>% 
+    add_model({var_model})
+}
 
-tuned_RF_results <- tuned_RF %>% 
-  collect_metrics()
-tuned_RF_results
+perf_and_pred_generator <- function(var_workflow, var_tune, var_split)
+{
+  var_parameters <- {var_tune} %>% 
+    select_best(metric = "roc_auc")
+  
+  var_finalized_workflow <- {var_workflow} %>% 
+    finalize_workflow(var_parameters)
+  
+  var_fit <- var_finalized_workflow %>% 
+    last_fit(var_split)
+  
+  var_performance <- var_fit %>% 
+    collect_metrics()
+  
+  var_predictions <- var_fit %>% 
+    collect_predictions()
+  
+  return(list(perf = var_performance, pred = var_predictions))
+  
+}
 
-parameters_tuned_RF <- tuned_RF %>% 
-  select_best(metric = "roc_auc")
-parameters_tuned_RF
-
-finalized_workflow_RF <- workflow_RF %>% 
-  finalize_workflow(parameters_tuned_RF)
-finalized_workflow_RF
-
-fit_RF <- finalized_workflow_RF %>% 
-  last_fit(churn_split)
-fit_RF
-
-
-performance_RF <- fit_RF %>% 
-  collect_metrics()
-performance_RF
-
-predictions_RF <- fit_RF %>% 
-  collect_predictions()
-predictions_RF
-
-# Random Forrest Workflow with upsampling ----
-recipe_RF_up<- 
-  recipe(churn ~ age + avg_time_spent + points_in_wallet + gender + 
-           age_with_company + avg_transaction_value + region_category +
-           membership_category + used_special_discount + 
-           avg_frequency_login_days + internet_option + 
-           offer_application_preference,
-         data = churn_train) %>% 
-  step_upsample(churn) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
-
-model_RF_up <- 
-  rand_forest() %>% 
-  set_args(mtry = tune()) %>% 
-  set_engine("ranger", importance = "impurity") %>% 
-  set_mode("classification")
-
-workflow_RF_up <- 
-  workflow() %>% 
-  add_recipe(recipe_RF_up) %>% 
-  add_model(model_RF_up)
-
-workflow_RF_up
-
-tuned_RF_up <- workflow_RF_up %>% 
-  tune::tune_grid(resamples = CV_10,
-                  grid = grid_RF,
-                  metrics = metric_set(accuracy, roc_auc, f_meas))
-
-tuned_RF_results_up <- tuned_RF_up %>% 
-  collect_metrics()
-tuned_RF_results_up
-
-parameters_tuned_RF_up <- tuned_RF_up %>% 
-  select_best(metric = "roc_auc")
-parameters_tuned_RF
-
-finalized_workflow_RF_up <- workflow_RF_up %>% 
-  finalize_workflow(parameters_tuned_RF_up)
-finalized_workflow_RF_up
-
-fit_RF_up <- finalized_workflow_RF_up %>% 
-  last_fit(churn_split)
-fit_RF_up
-
-performance_RF_up <- fit_RF_up %>% 
-  collect_metrics()
-performance_RF_up
-
-predictions_RF_up <- fit_RF_up %>% 
-  collect_predictions()
-predictions_RF_up
- 
-# Random Forrest Workflow with downsampling ----
-recipe_RF_down<- 
-  recipe(churn ~ age + avg_time_spent + points_in_wallet + gender + 
-           age_with_company + avg_transaction_value + region_category +
-           membership_category + used_special_discount + 
-           avg_frequency_login_days + internet_option + 
-           offer_application_preference,
-         data = churn_train) %>% 
-  step_downsample(churn) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
-
-model_RF_down <- 
-  rand_forest() %>% 
-  set_args(mtry = tune()) %>% 
-  set_engine("ranger", importance = "impurity") %>% 
-  set_mode("classification")
-
-workflow_RF_down <- 
-  workflow() %>% 
-  add_recipe(recipe_RF_down) %>% 
-  add_model(model_RF_down)
-
-workflow_RF_down
-
-tuned_RF_down <- workflow_RF_down %>% 
-  tune::tune_grid(resamples = CV_10,
-                  grid = grid_RF,
-                  metrics = metric_set(accuracy, roc_auc, f_meas))
-
-tuned_RF_results_down <- tuned_RF_down %>% 
-  collect_metrics()
-tuned_RF_results_down
-
-parameters_tuned_RF_down <- tuned_RF_down %>% 
-  select_best(metric = "roc_auc")
-parameters_tuned_RF_down
-
-finalized_workflow_RF_down <- workflow_RF_down %>% 
-  finalize_workflow(parameters_tuned_RF_down)
-finalized_workflow_RF_down
-
-fit_RF_down <- finalized_workflow_RF_down %>% 
-  last_fit(churn_split)
-fit_RF_down
-
-performance_RF_down <- fit_RF_down %>% 
-  collect_metrics()
-performance_RF_down
-
-predictions_RF_down <- fit_RF_down %>% 
-  collect_predictions()
-predictions_RF_down
-
-
-# Combined Results from all random forrest iterations
-performance_RF
-performance_RF_up
-performance_RF_down
-perf_table <- performance_RF %>% 
-  mutate(performance_RF_up$.estimate) %>% 
-  mutate(performance_RF_down$.estimate) %>% 
-  select(-.estimator,-.config) 
-column_names <- c("Metric","W/o Sampling","UpSampling","Downsampling")
-colnames(perf_table) <- column_names
-perf_table
-### Output from Chandra's computer
-#Metric   `W/o Sampling` UpSampling Downsampling
-#<chr>             <dbl>      <dbl>        <dbl>
-#  1 accuracy          0.871      0.874        0.876
-#2 roc_auc           0.954      0.952        0.951
-predictions_RF_down <- predictions_RF_down %>% 
-  mutate(algo = "Random Forrest with downsampling")
-
-predictions_RF_up <- predictions_RF_up %>% 
-  mutate(algo = "Random Forrest with upsampling")
-
-predictions_RF <- predictions_RF %>% 
-  mutate(algo = "Random Forrest without any up/downsampling")
-
-# Drawing the ROC-AUC curve between multiple models
-comparing_predictions <- bind_rows(predictions_RF, 
-                                    predictions_RF_down,
-                                    predictions_RF_up)
-comparing_predictions %>%
-  group_by(algo) %>% # Say hello to group_by()
-  roc_curve(truth = churn, 
-            .pred_Yes) %>%
-  autoplot() +
-  ggthemes::scale_color_fivethirtyeight() +
-  labs(title = "Comparing different models",
-       color = "Prediction Tools")
-
-# XGBoost ----
-
-# Confusion Matrix ----
 CM_builder <- function(data, outcome)
 { 
   {data} %>% 
@@ -329,15 +145,6 @@ CM_builder <- function(data, outcome)
   # labs(title = "Your First Confusion Matrix")
 }
 
-CM_RF <- CM_builder(predictions_RF, "churn")
-CM_RF_Up <- CM_builder(predictions_RF_up, "churn")
-CM_RF_Down <- CM_builder(predictions_RF_down, "churn")
-# To see each of the plots, run the commands below :
-CM_RF
-CM_RF_Up
-CM_RF_Down
-
-# Extracting feature importance ----
 feature_importance_extractor <- function(workflow_data, full_dataset)
 {
   finalized_model <- {workflow_data} %>% fit({full_dataset})
@@ -347,7 +154,7 @@ feature_importance_extractor <- function(workflow_data, full_dataset)
   feature_importance <- data.frame(importance = model_summary$variable.importance) %>% 
     rownames_to_column("feature") %>% 
     as_tibble() %>% 
-    mutate(feature = as.factor(feature))
+    mutate(feature = as.factor(feature)) 
   
   feature_importance %>% 
     ggplot(aes(x = importance, y = reorder(feature, importance), fill = importance)) +
@@ -359,11 +166,384 @@ feature_importance_extractor <- function(workflow_data, full_dataset)
       title = "Feature (Variable) Importance for Churn Prediction") + 
     ggthemes::theme_fivethirtyeight()
 }
+
+
+# Recipes ----
+recipe_common <- recipe(churn ~ age + avg_time_spent + points_in_wallet + 
+                          age_with_company + avg_transaction_value +
+                          membership_category + 
+                          avg_frequency_login_days,
+                        data = churn_train)
+
+recipe_norm_dummy <- 
+  recipe_common %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+recipe_up <-   
+  recipe_common %>% 
+  step_upsample(churn) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+recipe_down <- 
+  recipe_common %>% 
+  step_downsample(churn) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+recipe_boxcox <- 
+  recipe_common %>% 
+  step_BoxCox(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+  
+recipe_rose <- 
+  recipe_common %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_rose(churn)
+# Random Forrest ----
+## Random Forreset Workflowwithout any up/down sampling ----
+model_RF <- 
+  rand_forest() %>% 
+  set_args(mtry = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+
+workflow_RF <- workflow_generator(recipe_norm_dummy, model_RF)
+
+grid_RF <- expand.grid(mtry = c(2,3,4,5,6))
+
+tuned_RF <- workflow_RF %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+perf_and_pred <- perf_and_pred_generator(workflow_RF,tuned_RF, churn_split)
+performance_RF <- perf_and_pred$perf
+predictions_RF <- perf_and_pred$pred
+
+## Random Forrest Workflow with upsampling ----
+workflow_RF_up <- workflow_generator(recipe_up, model_RF)
+
+tuned_RF_up <- workflow_RF_up %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+
+perf_and_pred <- perf_and_pred_generator(workflow_RF_up, tuned_RF_up, churn_split)
+performance_RF_up <- perf_and_pred$perf
+predictions_RF_up <- perf_and_pred$pred
+
+## Random Forrest Workflow with downsampling ----
+workflow_RF_down <- workflow_generator(recipe_down, model_RF)
+
+tuned_RF_down <- workflow_RF_down %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+perf_and_pred <- perf_and_pred_generator(workflow_RF_down, tuned_RF_down, churn_split)
+performance_RF_down <- perf_and_pred$perf
+predictions_RF_down <- perf_and_pred$pred
+ 
+## Random Forrest Workflow with boxcox ----
+workflow_RF_boxcox <- workflow_generator(recipe_boxcox, model_RF)
+
+tuned_RF_boxcox <- workflow_RF_boxcox %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, churn_split)
+performance_RF_boxcox <- perf_and_pred$perf
+predictions_RF_boxcox <- perf_and_pred$pred
+
+## Random Forrest Workflow with rose ----
+workflow_RF_rose <- workflow_generator(recipe_rose, model_RF)
+
+tuned_RF_rose <- workflow_RF_rose %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+perf_and_pred <- perf_and_pred_generator(workflow_RF_rose, tuned_RF_rose, churn_split)
+performance_RF_rose <- perf_and_pred$perf
+predictions_RF_rose <- perf_and_pred$pred
+
+
+
+
+#XGBoost ----
+## XGBoost w/o up or down sampling----
+model_xgb <- 
+  boost_tree(trees = 1000,
+             mtry = tune(),
+             min_n = tune(),
+             tree_depth = tune(),
+             sample_size = tune(),
+             learn_rate = tune()
+  ) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+
+workflow_xg <- workflow_generator(recipe_norm_dummy, model_xgb)
+
+set.seed(100)
+grid_XG <-
+  grid_max_entropy(
+    mtry(c(5L, 10L),
+    ),
+    min_n(c(10L, 40L)
+    ),
+    tree_depth(c(5L, 25L)
+    ),
+    sample_prop(c(0.5, 1.0)
+    ),
+    learn_rate(c(-2, -1)
+    ),
+    size = 20
+  )
+tuned_xg <- 
+  workflow_xg %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_XG,
+            control = control_grid(save_pred = T),
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+
+perf_and_pred <- perf_and_pred_generator(workflow_xg, tuned_xg, churn_split)
+performance_xg <- perf_and_pred$perf
+predictions_xg <- perf_and_pred$pred
+
+## XGBoost with upsampling ----
+
+workflow_xg_up <- workflow_generator(recipe_up, model_xgb)
+tuned_xg_up <- 
+  workflow_xg_up %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_XG,
+            control = control_grid(save_pred = T),
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+perf_and_pred <- perf_and_pred_generator(workflow_xg_up, tuned_xg_up, churn_split)
+performance_xg_up <- perf_and_pred$perf
+predictions_xg_up <- perf_and_pred$pred
+
+## XGBoost with downsampling ----
+
+workflow_xg_down <- workflow_generator(recipe_down, model_xgb)
+tuned_xg_down <- 
+  workflow_xg_down %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_XG,
+            control = control_grid(save_pred = T),
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+perf_and_pred <- perf_and_pred_generator(workflow_xg_down, tuned_xg_down, churn_split)
+performance_xg_down <- perf_and_pred$perf
+predictions_xg_down <- perf_and_pred$pred
+
+## XGBoost with boxcox  ----
+
+workflow_xg_boxcox <- workflow_generator(recipe_boxcox, model_xgb)
+tuned_xg_boxcox <- 
+  workflow_xg_boxcox %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_XG,
+            control = control_grid(save_pred = T),
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+perf_and_pred <- perf_and_pred_generator(workflow_xg_boxcox, tuned_xg_boxcox, churn_split)
+performance_xg_boxcox <- perf_and_pred$perf
+predictions_xg_boxcox <- perf_and_pred$pred
+
+## XGBoost with rose  ----
+
+workflow_xg_rose <- workflow_generator(recipe_rose, model_xgb)
+tuned_xg_rose <- 
+  workflow_xg_rose %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_XG,
+            control = control_grid(save_pred = T),
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+perf_and_pred <- perf_and_pred_generator(workflow_xg_rose, tuned_xg_rose, churn_split)
+performance_xg_rose <- perf_and_pred$perf
+predictions_xg_rose <- perf_and_pred$pred
+
+#Logistic Regression 
+## Logistic Regression without any up/down sampling
+model_glm <- 
+  logistic_reg(mode = "classification") %>% 
+  set_engine("glm") %>% 
+  set_args(C = tune())
+
+grid_glm <- expand.grid(C=c(0.01, 0.1, 1,10,100))
+workflow_glm <- workflow_generator(recipe_norm_dummy, model_glm)
+
+tuned_glm <- 
+  workflow_glm %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_glm,
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+            )
+perf_and_pred <- perf_and_pred_generator(worfklow_glm, tuned_glm, churn_split)
+performance_glm <- perf_and_pred$perf
+predictions_glm <- perf_and_pred$pred
+
+  
+# Combined Results from all models ----
+performance_RF
+performance_RF_up
+performance_RF_down
+perf_table <- performance_RF %>% 
+  mutate(performance_RF_up$.estimate) %>% 
+  mutate(performance_RF_down$.estimate) %>% 
+  mutate(performance_RF_rose$.estimate) %>% 
+  mutate(performance_RF_boxcox$.estimate) %>% 
+  mutate(performance_xg$.estimate) %>% 
+  mutate(performance_xg_up$.estimate) %>%
+  mutate(performance_xg_down$.estimate) %>%
+  mutate(performance_xg_rose$.estimate) %>%
+  mutate(performance_xg_boxcox$.estimate) %>%
+  select(-.estimator,-.config) 
+column_names <- c("Metric","RF","RF_up","RF_down","RF_rose","RF_boxcox",
+                  "XG","XG_up","XG_down","XG_rose","XG_boxcox")
+colnames(perf_table) <- column_names
+perf_table
+### Output from Chandra's computer
+#Metric   `W/o Sampling` UpSampling Downsampling
+#<chr>             <dbl>      <dbl>        <dbl>
+#  1 accuracy          0.871      0.874        0.876
+#2 roc_auc           0.954      0.952        0.951
+predictions_RF_down <- predictions_RF_down %>% 
+  mutate(algo = "RF_down")
+predictions_RF_up <- predictions_RF_up %>% 
+  mutate(algo = "RF_up")
+predictions_RF <- predictions_RF %>% 
+  mutate(algo = "RF")
+predictions_RF_rose <- predictions_RF_rose %>% 
+  mutate(algo = "RF_rose")
+predictions_RF_boxcox <- predictions_RF_boxcox %>% 
+  mutate(algo = "RF_boxcox")
+
+predictions_xg_down <- predictions_xg_down %>% 
+  mutate(algo = "xg_down")
+predictions_xg_up <- predictions_xg_up %>% 
+  mutate(algo = "xg_up")
+predictions_xg <- predictions_xg %>% 
+  mutate(algo = "xg")
+predictions_xg_rose <- predictions_xg_rose %>% 
+  mutate(algo = "xg_rose")
+predictions_xg_boxcox <- predictions_xg_boxcox %>% 
+  mutate(algo = "xg_boxcox")
+
+
+# Drawing the ROC-AUC curve between multiple models
+comparing_predictions <- bind_rows(predictions_RF, 
+                                   predictions_RF_down,
+                                   predictions_RF_up,
+                                   predictions_RF_boxcox,
+                                   predictions_xg,
+                                   predictions_xg_up,
+                                   predictions_xg_rose,
+                                   predictions_xg_boxcox)
+comparing_predictions %>%
+  group_by(algo) %>% # Say hello to group_by()
+  roc_curve(truth = churn, 
+            .pred_Yes) %>%
+  autoplot() +
+#  ggthemes::scale_color_fivethirtyeight() +
+  labs(title = "Comparing different models",
+       color = "Prediction Tools")
+# Confusion Matrix ----
+CM_RF <- CM_builder(predictions_RF, "churn")
+CM_RF_Up <- CM_builder(predictions_RF_up, "churn")
+CM_RF_Down <- CM_builder(predictions_RF_down, "churn")
+CM_RF_Rose <- CM_builder(predictions_RF_boxcox,"churn")
+CM_RF_boxcox <- CM_builder(predictions_RF_rose,"churn")
+
+CM_xg <- CM_builder(predictions_xg, "churn")
+CM_xg_Up <- CM_builder(predictions_xg_up, "churn")
+CM_xg_Down <- CM_builder(predictions_xg_down, "churn")
+CM_xg_Rose <- CM_builder(predictions_xg_boxcox,"churn")
+CM_xg_boxcox <- CM_builder(predictions_xg_rose,"churn")
+
+
+
+
+# To see each of the plots, run the commands below :
+
+ggarrange(CM_RF, CM_RF_Up, CM_RF_Down, CM_RF_Rose, CM_RF_boxcox,
+          CM_xg, CM_xg_Up, CM_xg_Down, CM_xg_Rose, CM_xg_boxcox,
+          ncol = 5, nrow = 2, 
+          labels = c("RF","RF_up","RF_down","RF_rose","RF_boxcox",
+                  "XG","XG_up","XG_down","XG_rose","XG_boxcox"))
+# Extracting feature importance ----
+
+finalized_model <- workflow_RF %>% fit(churn_cleaned)
+
+model_summary <- pull_workflow_fit(finalized_model)$fit
+
+feature_importance <- data.frame(importance = model_summary$variable.importance) %>% 
+  rownames_to_column("feature") %>% 
+  as_tibble() %>% 
+  mutate(feature = as.factor(feature)) %>% 
+  feature_importance %>% 
+  ggplot(aes(x = importance, y = reorder(feature, importance), fill = importance)) +
+  geom_col(show.legend = F) +
+  scale_fill_gradient(low = "deepskyblue1", high = "deepskyblue4") +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(
+    y = NULL,
+    title = "Feature (Variable) Importance for Churn Prediction") + 
+  ggthemes::theme_fivethirtyeight()
+
+
 feature_imp_RF <- feature_importance_extractor(workflow_RF, churn_cleaned)
 feature_imp_RF_up <- feature_importance_extractor(workflow_RF_up, churn_cleaned)
 feature_imp_RF_down <- feature_importance_extractor(workflow_RF_down, churn_cleaned)
+feature_imp_RF_Rose <- feature_importance_extractor(workflow_RF_rose, churn_cleaned)
+feature_imp_RF_boxcox <- feature_importance_extractor(workflow_RF_boxcox, churn_cleaned)
+
+feature_imp_xg <- feature_importance_extractor(workflow_xg, churn_cleaned)
+feature_imp_xg_up <- feature_importance_extractor(workflow_xg_up, churn_cleaned)
+feature_imp_xg_down <- feature_importance_extractor(workflow_xg_down, churn_cleaned)
+feature_imp_xg_Rose <- feature_importance_extractor(workflow_xg_rose, churn_cleaned)
+feature_imp_xg_boxcox <- feature_importance_extractor(workflow_xg_boxcox, churn_cleaned)
 
 # To see feature importance for each workflow run the commands below 
 feature_imp_RF
 feature_imp_RF_up
 feature_imp_RF_down
+feature_imp_RF_boxcox
+
+ggarrange(feature_imp_RF, feature_imp_RF_up, feature_imp_RF_down, feature_imp_RF_Rose,
+          feature_imp_RF_boxcox, feature_imp_xg, feature_imp_xg_up, feature_imp_xg_down, 
+          feature_imp_xg_Rose, feature_imp_xg_boxcox,
+          ncol = 2, nrow = 5, 
+          labels = c("RF","RF_up","RF_down","RF_rose","RF_boxcox",
+                     "XG","XG_up","XG_down","XG_rose","XG_boxcox"))
+
+# Results ----
+## With all possible predictors
+## churn ~ age + avg_time_spent + points_in_wallet + gender + 
+##age_with_company + avg_transaction_value + region_category +
+##  membership_category + used_special_discount + 
+##  avg_frequency_login_days + internet_option + 
+##  offer_application_preference
+##Metric      RF RF_up RF_down RF_rose RF_boxcox    XG XG_up XG_down XG_rose XG_boxcox
+##<chr>    <dbl> <dbl>   <dbl>   <dbl>     <dbl> <dbl> <dbl>   <dbl>   <dbl>     <dbl>
+##  1 accuracy 0.869 0.872   0.873   0.610     0.870 0.872 0.872   0.871   0.576     0.876
+##2 roc_auc  0.954 0.955   0.952   0.908     0.954 0.954 0.954   0.952   0.932     0.954
+
+#> perf_table
+## A tibble: 2 × 11
+#Metric      RF RF_up RF_down RF_rose RF_boxcox    XG XG_up XG_down XG_rose XG_boxcox
+#<chr>    <dbl> <dbl>   <dbl>   <dbl>     <dbl> <dbl> <dbl>   <dbl>   <dbl>     <dbl>
+#  1 accuracy 0.871 0.872   0.873   0.428     0.871 0.876 0.871   0.870   0.413     0.874
+#2 roc_auc  0.955 0.954   0.950   0.905     0.955 0.955 0.956   0.952   0.930     0.955
+#churn ~ age + avg_time_spent + points_in_wallet + gender + 
+#  age_with_company + avg_transaction_value + region_category +
+#  membership_category + used_special_discount + 
+#  avg_frequency_login_days + internet_option + 
+#  offer_application_preference + feedback + past_complaint +
+#  complaint_status + preferred_offer_types + joined_through_referral#
