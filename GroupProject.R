@@ -1,7 +1,7 @@
 
 
 #Setting working directory ----
-working_dir <- "/Users/chandrasekarve/Desktop/SMU/Term3/BA/GroupProject/BA_Project"
+working_dir <- "/Users/chandrasekarve/Desktop/SMU/Term3/BA/BA_Project"
 setwd(working_dir)
 
 #Installing packages ----
@@ -18,29 +18,32 @@ doParallel::registerDoParallel()
 churn_df <- read_csv("churn_dataset_train.csv")
 curr_date <- as.Date("2022-07-01")
 
-churn_cleaned <- churn_df %>% 
+churn_cleaned <- churn_df %>%
   filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
-         & avg_frequency_login_days != "Error" & gender != "Unknown" 
-         & joined_through_referral != "?" & churn_risk_score > 0) %>% 
-  drop_na() %>% 
-  mutate(age_with_company = difftime(curr_date,joining_date, units = "days")) %>% 
-  select(-medium_of_operation, 
-         -referral_id, -customer_id, -security_no, -Name) %>% 
-  mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>% 
-  complete() %>% 
-  dplyr::mutate_all(as.factor) %>% 
+         & avg_frequency_login_days != "Error" & gender != "Unknown"
+         & joined_through_referral != "?" & churn_risk_score > 0) %>%
+  drop_na() %>%
+  mutate(age_with_company = difftime(curr_date,joining_date, units = "days")) %>%
+  mutate(avg_frequency_login_days_interval =
+           ifelse(as.numeric(avg_frequency_login_days) > 0 & as.numeric(avg_frequency_login_days) <= 10, 1,
+                  ifelse(as.numeric(avg_frequency_login_days) > 10 & as.numeric(avg_frequency_login_days) <= 20, 2,
+                         ifelse(as.numeric(avg_frequency_login_days) > 20 & as.numeric(avg_frequency_login_days) <= 30, 3,
+                                ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
+                         )))) %>%
+  select(-medium_of_operation,
+         -referral_id, -customer_id, -security_no, -Name) %>%
+  mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>%
+  complete() %>%
+  dplyr::mutate_all(as.factor) %>%
   dplyr::mutate(across(c(
     age, avg_time_spent, points_in_wallet,
-    age_with_company, avg_transaction_value,
-    avg_frequency_login_days),as.numeric)) %>% 
+    age_with_company, avg_transaction_value#,
+    #avg_frequency_login_days
+  ),as.numeric)) %>%
   mutate(churn1 = fct_relevel(churn, "Yes"))
-
 churn_cleaned <- churn_cleaned %>% 
   select(churn, points_in_wallet, membership_category, avg_transaction_value,
-         avg_time_spent, age_with_company, age, avg_frequency_login_days)
-set.seed(100)
-skim(churn_cleaned)
-churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),3000),]
+         avg_time_spent, age_with_company, age, avg_frequency_login_days_interval)
 
 # EDA using ggapirs ----
 library(GGally)
@@ -172,7 +175,7 @@ feature_importance_extractor <- function(workflow_data, full_dataset)
 recipe_common <- recipe(churn ~ age + avg_time_spent + points_in_wallet + 
                           age_with_company + avg_transaction_value +
                           membership_category + 
-                          avg_frequency_login_days,
+                          avg_frequency_login_days_interval,
                         data = churn_train)
 
 recipe_norm_dummy <- 
@@ -196,15 +199,57 @@ recipe_boxcox <-
   recipe_common %>% 
   step_BoxCox(all_numeric_predictors()) %>% 
   step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) 
   
 recipe_rose <- 
   recipe_common %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors()) %>% 
   step_rose(churn)
-# Random Forrest ----
-## Random Forreset Workflowwithout any up/down sampling ----
+
+
+# Models ----
+
+##Logistic Regression ----
+## Logistic Regression without any up/down sampling
+model_glm <- 
+  logistic_reg(mode = "classification") %>% 
+  set_engine("glm") 
+
+workflow_glm <- workflow_generator(recipe_norm_dummy, model_glm)
+
+tuned_glm <- 
+  workflow_glm %>% 
+  tune::tune_grid(resamples = CV_10,
+                  metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+
+perf_and_pred <- perf_and_pred_generator(workflow_glm, tuned_glm, churn_split)
+performance_glm <- perf_and_pred$perf
+predictions_glm <- perf_and_pred$pred
+
+
+
+##NULL Model
+model_null <- null_model() %>% 
+  set_engine("parsnip") %>% 
+  set_mode("classification")
+
+workflow_null <- workflow_generator(recipe_norm_dummy,model_null)
+
+fit_null <- 
+  workflow_null %>% 
+  fit_resamples(CV_10,
+                control = control_resamples(save_pred = T))
+
+
+performance_null <- fit_null %>% collect_metrics()
+predictions_null <- fit_null %>% collect_predictions()
+
+
+## Random Forrest ----
+### Random Forreset Workflowwithout any up/down sampling ----
 model_RF <- 
   rand_forest() %>% 
   set_args(mtry = tune()) %>% 
@@ -213,7 +258,7 @@ model_RF <-
 
 workflow_RF <- workflow_generator(recipe_norm_dummy, model_RF)
 
-grid_RF <- expand.grid(mtry = c(2,3,4,5,6))
+grid_RF <- expand.grid(mtry = c(3,4,5))
 
 tuned_RF <- workflow_RF %>% 
   tune::tune_grid(resamples = CV_10,
@@ -223,7 +268,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_RF,tuned_RF, churn_split)
 performance_RF <- perf_and_pred$perf
 predictions_RF <- perf_and_pred$pred
 
-## Random Forrest Workflow with upsampling ----
+### Random Forrest Workflow with upsampling ----
 workflow_RF_up <- workflow_generator(recipe_up, model_RF)
 
 tuned_RF_up <- workflow_RF_up %>% 
@@ -235,7 +280,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_RF_up, tuned_RF_up, churn_spli
 performance_RF_up <- perf_and_pred$perf
 predictions_RF_up <- perf_and_pred$pred
 
-## Random Forrest Workflow with downsampling ----
+### Random Forrest Workflow with downsampling ----
 workflow_RF_down <- workflow_generator(recipe_down, model_RF)
 
 tuned_RF_down <- workflow_RF_down %>% 
@@ -246,7 +291,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_RF_down, tuned_RF_down, churn_
 performance_RF_down <- perf_and_pred$perf
 predictions_RF_down <- perf_and_pred$pred
  
-## Random Forrest Workflow with boxcox ----
+### Random Forrest Workflow with boxcox ----
 workflow_RF_boxcox <- workflow_generator(recipe_boxcox, model_RF)
 
 tuned_RF_boxcox <- workflow_RF_boxcox %>% 
@@ -257,7 +302,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, ch
 performance_RF_boxcox <- perf_and_pred$perf
 predictions_RF_boxcox <- perf_and_pred$pred
 
-## Random Forrest Workflow with rose ----
+### Random Forrest Workflow with rose ----
 workflow_RF_rose <- workflow_generator(recipe_rose, model_RF)
 
 tuned_RF_rose <- workflow_RF_rose %>% 
@@ -271,8 +316,8 @@ predictions_RF_rose <- perf_and_pred$pred
 
 
 
-#XGBoost ----
-## XGBoost w/o up or down sampling----
+##XGBoost ----
+### XGBoost w/o up or down sampling----
 model_xgb <- 
   boost_tree(trees = 1000,
              mtry = tune(),
@@ -293,7 +338,7 @@ grid_XG <-
     ),
     min_n(c(10L, 40L)
     ),
-    tree_depth(c(5L, 25L)
+    tree_depth(c(5L, 10L)
     ),
     sample_prop(c(0.5, 1.0)
     ),
@@ -313,7 +358,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_xg, tuned_xg, churn_split)
 performance_xg <- perf_and_pred$perf
 predictions_xg <- perf_and_pred$pred
 
-## XGBoost with upsampling ----
+### XGBoost with upsampling ----
 
 workflow_xg_up <- workflow_generator(recipe_up, model_xgb)
 tuned_xg_up <- 
@@ -327,7 +372,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_xg_up, tuned_xg_up, churn_spli
 performance_xg_up <- perf_and_pred$perf
 predictions_xg_up <- perf_and_pred$pred
 
-## XGBoost with downsampling ----
+### XGBoost with downsampling ----
 
 workflow_xg_down <- workflow_generator(recipe_down, model_xgb)
 tuned_xg_down <- 
@@ -341,7 +386,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_xg_down, tuned_xg_down, churn_
 performance_xg_down <- perf_and_pred$perf
 predictions_xg_down <- perf_and_pred$pred
 
-## XGBoost with boxcox  ----
+### XGBoost with boxcox  ----
 
 workflow_xg_boxcox <- workflow_generator(recipe_boxcox, model_xgb)
 tuned_xg_boxcox <- 
@@ -355,7 +400,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_xg_boxcox, tuned_xg_boxcox, ch
 performance_xg_boxcox <- perf_and_pred$perf
 predictions_xg_boxcox <- perf_and_pred$pred
 
-## XGBoost with rose  ----
+### XGBoost with rose  ----
 
 workflow_xg_rose <- workflow_generator(recipe_rose, model_xgb)
 tuned_xg_rose <- 
@@ -369,25 +414,6 @@ perf_and_pred <- perf_and_pred_generator(workflow_xg_rose, tuned_xg_rose, churn_
 performance_xg_rose <- perf_and_pred$perf
 predictions_xg_rose <- perf_and_pred$pred
 
-#Logistic Regression 
-## Logistic Regression without any up/down sampling
-model_glm <- 
-  logistic_reg(mode = "classification") %>% 
-  set_engine("glm") %>% 
-  set_args(C = tune())
-
-grid_glm <- expand.grid(C=c(0.01, 0.1, 1,10,100))
-workflow_glm <- workflow_generator(recipe_norm_dummy, model_glm)
-
-tuned_glm <- 
-  workflow_glm %>% 
-  tune_grid(resamples = CV_10,
-            grid = grid_glm,
-            metrics = metric_set(accuracy, roc_auc, f_meas)
-            )
-perf_and_pred <- perf_and_pred_generator(worfklow_glm, tuned_glm, churn_split)
-performance_glm <- perf_and_pred$perf
-predictions_glm <- perf_and_pred$pred
 
   
 # Combined Results from all models ----
@@ -458,14 +484,14 @@ comparing_predictions %>%
 CM_RF <- CM_builder(predictions_RF, "churn")
 CM_RF_Up <- CM_builder(predictions_RF_up, "churn")
 CM_RF_Down <- CM_builder(predictions_RF_down, "churn")
-CM_RF_Rose <- CM_builder(predictions_RF_boxcox,"churn")
-CM_RF_boxcox <- CM_builder(predictions_RF_rose,"churn")
+CM_RF_Rose <- CM_builder(predictions_RF_rose,"churn")
+CM_RF_boxcox <- CM_builder(predictions_RF_boxcox,"churn")
 
 CM_xg <- CM_builder(predictions_xg, "churn")
 CM_xg_Up <- CM_builder(predictions_xg_up, "churn")
 CM_xg_Down <- CM_builder(predictions_xg_down, "churn")
-CM_xg_Rose <- CM_builder(predictions_xg_boxcox,"churn")
-CM_xg_boxcox <- CM_builder(predictions_xg_rose,"churn")
+CM_xg_Rose <- CM_builder(predictions_xg_rose,"churn")
+CM_xg_boxcox <- CM_builder(predictions_xg_boxcox,"churn")
 
 
 
@@ -522,6 +548,157 @@ ggarrange(feature_imp_RF, feature_imp_RF_up, feature_imp_RF_down, feature_imp_RF
           ncol = 2, nrow = 5, 
           labels = c("RF","RF_up","RF_down","RF_rose","RF_boxcox",
                      "XG","XG_up","XG_down","XG_rose","XG_boxcox"))
+# Finalized model for shiny ----
+finalized_parameters_tuned <- 
+  tuned_RF_boxcox %>% 
+  select_best(metric = "roc_auc")
+
+finalized_workflow <- 
+  workflow_RF_boxcox %>% 
+  finalize_workflow(finalized_parameters_tuned)
+finalized_model <-
+  finalized_workflow %>% 
+  fit(churn_cleaned)
+
+finalized_model %>% 
+  saveRDS("finalized_model_BAProject.rds")
+
+# Shiny App ----
+library(shiny)
+library(shinydashboard)
+
+##UI ----
+
+MODEL <- readRDS("finalized_model_BAProject.rds")
+
+ui <- 
+  dashboardPage(
+    
+    dashboardHeader(title = "Churn Prediction App"),
+    
+    dashboardSidebar(
+      menuItem(
+        "Churn Prediction",
+        tabName = "prices_tab",
+        icon = icon("snowflake")
+      )
+    ),
+    
+    dashboardBody(
+      
+      tabItem(
+        tabName = "attribute_tab",
+        box(sliderInput(inputId = "age", label = "Age of the customer",
+                        min = 1, max = 55, value = 8)
+        ),
+        box(sliderInput(inputId = "avg_transaction_value", 
+                        label = "Avg Transaction Value",
+                        min = 1, max = 20000, value = 10000)
+        ),
+        box(sliderInput(inputId = "avg_time_spent", 
+                        label = "Avg Time Spent",
+                        min = 1, max = 15000, value = 7500)
+        ),
+        box(sliderInput(inputId = "points_in_wallet", 
+                        label = "Points in Wallet",
+                        min = 1, max = 18000, value = 9000)
+        ),
+        box(sliderInput(inputId = "age_with_company", 
+                        label = "Duration with Company",
+                        min = 1, max = 1500, value = 750)
+        ),
+        box(selectInput(inputId = "avg_frequency_login_days_interval", 
+                        label = "Avg Frequency Login",
+                        c("0-10" = 1, "10-20" = 2,
+                          "20-30" = 2, ">30" = 4))
+        ),
+        box(selectInput(inputId = "membership_category", 
+                        label = "Membership Category",
+                        c("No Membership" = "No Membership",
+                          "Basic" = "Basic Membership",
+                          "Silver" = "Silver Membership",
+                          "Gold" = "Gold Membership",
+                          "Platinum" = "Platinum Membership"))
+        ),
+      ),
+      tabItem(tabName = "churn_risk",
+              gaugeOutput("churn_risk")
+      ),
+      tabItem(
+        tabName = "prediction_tab",
+        box(valueBoxOutput("churn_prediction")
+        )
+      )
+
+      
+    )
+  )
+
+## Server ----
+
+server <- function(input, output) 
+{ 
+  output$churn_prediction <- 
+    renderValueBox(
+      {
+        
+        prediction <- 
+          predict(MODEL,
+                  tibble("age" = input$age,
+                         "age_with_company" = input$age_with_company,
+                         "points_in_wallet" = input$points_in_wallet,
+                         "avg_transaction_value" = input$avg_transaction_value,
+                         "avg_time_spent" = input$avg_time_spent,
+                         "membership_category" = input$membership_category,
+                         "avg_frequency_login_days_interval" = input$avg_frequency_login_days_interval
+                  )
+                  
+          )
+        
+        predicted_values <- 
+          predict(MODEL,
+                  tibble("age" = input$age,
+                         "age_with_company" = input$age_with_company,
+                         "points_in_wallet" = input$points_in_wallet,
+                         "avg_transaction_value" = input$avg_transaction_value,
+                         "avg_time_spent" = input$avg_time_spent,
+                         "membership_category" = input$membership_category,
+                         "avg_frequency_login_days_interval" = input$avg_frequency_login_days_interval
+                  ))
+        predicted_probabilities <- 
+          predict(MODEL,
+                  tibble("age" = input$age,
+                         "age_with_company" = input$age_with_company,
+                         "points_in_wallet" = input$points_in_wallet,
+                         "avg_transaction_value" = input$avg_transaction_value,
+                         "avg_time_spent" = input$avg_time_spent,
+                         "membership_category" = input$membership_category,
+                         "avg_frequency_login_days_interval" = input$avg_frequency_login_days_interval
+                  ),type="prob")
+        
+        for_prediction_statement <- prediction$.pred_class
+
+        shinydashboard::valueBox(
+          value = predicted_values,
+          subtitle = paste0("Will this customer churn?")
+        )
+        gauge(predicted_probabilities$.pred_Yes * 100, 
+              min = 0, 
+              max = 100, 
+              sectors = gaugeSectors(success = c(0, 33), 
+                                     warning = c(33, 66),
+                                     danger = c(66, 100)))
+
+        
+      }
+    )
+  
+}
+
+## Run Shiny App ----
+
+shinyApp(ui, server)
+
 
 # Results ----
 ## With all possible predictors
