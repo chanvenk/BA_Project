@@ -200,15 +200,24 @@ recipe_boxcox <-
   step_BoxCox(all_numeric_predictors()) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors()) %>% 
-  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) 
-  
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
+  step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
+  step_poly(points_in_wallet, degree = 2, role = "predictor")
+
+
 recipe_rose <- 
   recipe_common %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors()) %>% 
   step_rose(churn)
 
-
+recipe_yeojohnson <- 
+  recipe_common %>% 
+  step_YeoJohnson(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) 
+  
 # Models ----
 
 ##Logistic Regression ----
@@ -301,6 +310,17 @@ tuned_RF_boxcox <- workflow_RF_boxcox %>%
 perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, churn_split)
 performance_RF_boxcox <- perf_and_pred$perf
 predictions_RF_boxcox <- perf_and_pred$pred
+performance_RF_boxcox
+### Random Forreest Workflow with YeoJohnson ----
+workflow_RF_yeojohnson <- workflow_generator(recipe_yeojohnson, model_RF)
+
+tuned_RF_yeojohnson <- workflow_RF_yeojohnson %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+perf_and_pred <- perf_and_pred_generator(workflow_RF_yeojohnson, tuned_RF_yeojohnson, churn_split)
+performance_RF_yeojohnson <- perf_and_pred$perf
+predictions_RF_yeojohnson <- perf_and_pred$pred
 
 ### Random Forrest Workflow with rose ----
 workflow_RF_rose <- workflow_generator(recipe_rose, model_RF)
