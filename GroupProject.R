@@ -23,7 +23,7 @@ churn_cleaned <- churn_df %>%
          & avg_frequency_login_days != "Error" & gender != "Unknown"
          & joined_through_referral != "?" & churn_risk_score > 0) %>%
   drop_na() %>%
-  mutate(age_with_company = difftime(curr_date,joining_date, units = "days")) %>%
+  mutate(age_with_company = difftime(Sys.Date(),joining_date, units = "days")) %>%
   mutate(avg_frequency_login_days_interval =
            ifelse(as.numeric(avg_frequency_login_days) > 0 & as.numeric(avg_frequency_login_days) <= 10, 1,
                   ifelse(as.numeric(avg_frequency_login_days) > 10 & as.numeric(avg_frequency_login_days) <= 20, 2,
@@ -37,8 +37,8 @@ churn_cleaned <- churn_df %>%
   dplyr::mutate_all(as.factor) %>%
   dplyr::mutate(across(c(
     age, avg_time_spent, points_in_wallet,
-    age_with_company, avg_transaction_value#,
-    #avg_frequency_login_days
+    age_with_company, avg_transaction_value,
+  avg_frequency_login_days
   ),as.numeric)) %>%
   mutate(churn1 = fct_relevel(churn, "Yes"))
 churn_cleaned <- churn_cleaned %>% 
@@ -307,6 +307,7 @@ tuned_RF_boxcox <- workflow_RF_boxcox %>%
   tune::tune_grid(resamples = CV_10,
                   grid = grid_RF,
                   metrics = metric_set(accuracy, roc_auc, f_meas))
+
 perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, churn_split)
 performance_RF_boxcox <- perf_and_pred$perf
 predictions_RF_boxcox <- perf_and_pred$pred

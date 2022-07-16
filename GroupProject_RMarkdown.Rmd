@@ -1,0 +1,1055 @@
+---
+title: "MGMT655 Group Project Submission"
+subtitle: "Data Science Project for MGMT 655 Business Analytics for Decision Making"
+author: "Na HUANG, Emmanuel RICHARD, Chandrasekar Venkataraman, Do Hoang Yen LE"
+date: "16 July 2022"
+output:
+  html_document:
+    prettydoc::html_pretty:
+      theme: Cayman
+    highlight: breezedark
+    # css: styles.css
+    # latex_engine: xelatex
+    # mainfont: Calibri Light
+    toc: yes
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+---
+
+```{r setup, include=F}
+# Global Setting
+knitr::opts_chunk$set(echo = T, 
+                      warning = F, 
+                      message = F,
+                      cache = T,
+                      dpi = 600, 
+                      fig.width = 10, 
+                      fig.height = 6, 
+                      fig.align = "center")
+```
+
+```{css, echo = F}
+h1 { color: rgb(62, 6, 148); }
+h2 { color: rgb(0, 104, 139); } 
+h3 { color: rgb(51, 122, 183); }
+
+body {font-family:  -apple-system, BlinkMacSystemFont, 
+                    "Segoe UI", Roboto, Ubuntu;
+      font-size: 12pt; }
+
+code { color: rgb(205,79,57) }
+
+.tocify-extend-page {height: 0 !important; }
+```
+
+## 1. Business Question
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend. Mauris non dui imperdiet, placerat nulla non, finibus velit. Praesent diam orci, fringilla quis nulla eu, commodo congue ipsum. Donec erat felis, venenatis eu nisi eu, dictum egestas erat. Sed quis tempus lectus. Vestibulum lobortis tellus et ullamcorper lacinia. Fusce faucibus porttitor enim, ultrices egestas eros mattis ac. Suspendisse at maximus sapien. Aenean faucibus augue ut congue ornare. Quisque tristique ex eget eros fermentum condimentum. Vivamus ut mi leo. Aenean imperdiet, felis sed ultricies porttitor, lectus sem congue diam, ut malesuada sem turpis sed arcu. Proin tincidunt ultricies est id sollicitudin. Suspendisse potenti.
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend. Mauris non dui imperdiet, placerat nulla non, finibus velit. Praesent diam orci, fringilla quis nulla eu, commodo congue ipsum. Donec erat felis, venenatis eu nisi eu, dictum egestas erat. Sed quis tempus lectus. Vestibulum lobortis tellus et ullamcorper lacinia. Fusce faucibus porttitor enim, ultrices egestas eros mattis ac. Suspendisse at maximus sapien. Aenean faucibus augue ut congue ornare. Quisque tristique ex eget eros fermentum condimentum. Vivamus ut mi leo. Aenean imperdiet, felis sed ultricies porttitor, lectus sem congue diam, ut malesuada sem turpis sed arcu. Proin tincidunt ultricies est id sollicitudin. Suspendisse potenti.  
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend. Mauris non dui imperdiet, placerat nulla non, finibus velit. Praesent diam orci, fringilla quis nulla eu, commodo congue ipsum. Donec erat felis, venenatis eu nisi eu, dictum egestas erat. Sed quis tempus lectus. Vestibulum lobortis tellus et ullamcorper lacinia. 
+
+>  Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend. Mauris non dui imperdiet, placerat nulla non, finibus velit. Praesent diam orci, fringilla quis nulla eu, commodo congue ipsum. Donec erat felis, venenatis eu nisi eu, dictum egestas erat. Sed quis tempus lectus. Vestibulum lobortis tellus et ullamcorper lacinia. Fusce faucibus porttitor enim, ultrices egestas eros mattis ac. Suspendisse at maximus sapien. Aenean faucibus augue ut congue ornare. Quisque tristique ex eget eros fermentum condimentum. 
+
+## 2. Import
+
+> Load packages
+
+```{r Load Package}
+pacman::p_load(tidyverse, lubridate, tidymodels, skimr, 
+               GGally, ggstatsplot, Hmisc, broom, plotly, 
+               DT, doParallel, parsnip, themis, ranger,
+               ggpubr, vip, ggthemes
+)
+```
+
+> Data was sourced from [Kaggle](https://www.kaggle.com/datasets/imsparsh/churn-risk-rate-hackerearth-ml)
+
+Variable (Feature) Name    | Description
+:--------------------------|:--------------------------------------------------------------------
+`churn`                   | `Yes` if the patient had a stroke or `No` if not
+points_in_wallet          | Points in wallet of the customer
+membership_category       | "No Membership", "Basic Membership", "Premium Membership", "Silver                              Membership", "Gold Membership", "Platinum Membership"
+avg_transaction_value     | Average transaction value of the customer
+avg_time_spent            | Average time spent on the website by the customer
+avg_with_company          | Time since the joining date of the customer
+age                       | Age of the customer
+avg_frequency_login_days_interval  | Average frequency the customer logs in       ("0-10","10-20","20-30",">30")             
+
+```{r Import Data}
+churn_df <- read_csv("churn_dataset_train.csv")
+```
+
+```{r Data table}
+churn_df %>% 
+  datatable(options = list(scrollX = T))
+```  
+
+## 3. Transform & EDA
+
+```{r}
+skim(churn_df) 
+```
+
+```{r Transform Data}
+churn_cleaned <- churn_df %>%
+  filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
+         & avg_frequency_login_days != "Error" & gender != "Unknown"
+         & joined_through_referral != "?" & churn_risk_score > 0) %>%
+  drop_na() %>%
+  mutate(age_with_company = difftime(Sys.Date(),joining_date, units = "days")) %>%
+  mutate(avg_frequency_login_days_interval =
+           ifelse(as.numeric(avg_frequency_login_days) > 0 & as.numeric(avg_frequency_login_days) <= 10, 1,
+                  ifelse(as.numeric(avg_frequency_login_days) > 10 & as.numeric(avg_frequency_login_days) <= 20, 2,
+                         ifelse(as.numeric(avg_frequency_login_days) > 20 & as.numeric(avg_frequency_login_days) <= 30, 3,
+                                ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
+                         )))) %>%
+  select(-medium_of_operation,
+         -referral_id, -customer_id, -security_no, -Name) %>%
+  mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>%
+  complete() %>%
+  dplyr::mutate_all(as.factor) %>%
+  dplyr::mutate(across(c(
+    age, avg_time_spent, points_in_wallet,
+    age_with_company, avg_transaction_value,
+  avg_frequency_login_days
+  ),as.numeric)) %>%
+  mutate(churn1 = fct_relevel(churn, "Yes"))
+
+churn_cleaned <- churn_cleaned %>% 
+  select(churn, points_in_wallet, membership_category, avg_transaction_value,
+         avg_time_spent, age_with_company, age, avg_frequency_login_days_interval)
+
+```
+
+
+```{r Check Transform Data}
+skim(churn_cleaned)
+```
+
+### 3.1 Uni-variate Analysis {.tabset}
+
+> Key demographic variables are analysed to determine the characteristics of patients in the sample. 
+
+#### 3.1.1 Churn
+
+> Data set is highly imbalanced because stroke is a rare event. Balancing is required before applying Machine Learning Algorithm.
+
+```{r Churn Count}
+ggthemr("fresh")
+
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
+  ggplot(aes(churn)) +
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  scale_y_continuous(labels = percent) +
+  geom_label(aes(label = percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..)), 
+            stat = "count",
+            size = 5,
+            fill = "white") +
+  labs(title = "Proportion of Churned Customers",
+       x = "Churn",
+       y = "Proportion of Customers")
+```
+
+#### 3.1.2 Age
+
+> Age covers full range. Average customer age is 28 years-old.
+
+```{r Age Distribution}
+# should we have a cut off for age?
+churn_cleaned %>%
+  ggplot() +
+  geom_density(aes(x = age)) +
+  geom_vline(aes(xintercept = mean(age)),
+             linetype = "dashed",
+             color = "tomato3") +
+  annotate(geom = "text",
+         label = "Mean = 43",
+         color = "tomato3",
+         x = 35, 
+         y = 0.015) +
+  labs(title = "Age Distribution of Customers",
+       y = "Density",
+       x = "Age")
+
+summary(churn_cleaned$age)
+```
+
+#### 3.1.3 Points in wallet
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend.
+
+```{r Points in wallet Distribution}
+churn_cleaned %>%
+  filter(!is.na(churn_cleaned$points_in_wallet)) %>%
+  ggplot() +
+  geom_density(aes(x = points_in_wallet)) +
+  geom_vline(aes(xintercept = mean(points_in_wallet)),
+             linetype = "dashed",
+             color = "tomato3") +
+  annotate(geom = "text",
+           label = "Mean = 28.9",
+           color = "tomato3",
+           x = 40, 
+           y = 0.05) +
+  labs(title = "Points in wallet distribution of customers",
+       subtitle = "<Will fill in something here>",
+       y = "Density",
+       x = "Points in wallet")
+```
+
+#### 3.1.4 Average time spent
+
+> Average glucose level = 106.15. Sample is in the normal range. 
+
+```{r Average time spent Distribution}
+churn_cleaned %>%
+  ggplot() +
+  geom_density(aes(x = avg_time_spent)) +
+  geom_vline(aes(xintercept = mean(avg_time_spent)),
+             linetype = "dashed",
+             color = "tomato3") +
+  annotate(geom = "text",
+           label = "Mean = 6250",
+           color = "tomato3",
+           x = 135, 
+           y = 0.013) +
+  labs(title = "Average time spent by Customers",
+       y = "Density",
+       x = "Average time spent")
+
+summary(strokedataset$avg_glucose_level)
+```
+### {-}
+
+### 3.2 Multi-variate Analysis {.tabset}
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend. Mauris non dui imperdiet, placerat nulla non, finibus velit. Praesent diam orci, fringilla quis nulla eu, commodo congue ipsum. 
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. 
+
+#### 3.2.1 Membership category
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. 
+
+```{r Membership Category}
+churn_cleaned %>%
+  mutate(stroke = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  ggplot(aes(membership_category, group = churn)) +
+  geom_bar(aes
+           (y = ..prop.., 
+             fill = factor(..x..)), 
+           stat = "count", 
+           show.legend = FALSE) +
+  geom_label(aes(label = percent(..prop..),
+                y = ..prop..), 
+            stat = "count",
+            size = 5,
+            fill = "white") +
+  labs(title = "Proportion of churn/not churn With Membership Category",
+       x = "Membership Category", 
+       y = "Percentage", 
+       fill = "membership_category") +
+  facet_grid(~churn) +
+  scale_y_continuous(labels = percent) +
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn"))
+```
+#### 3.2.2 Average Frequency of login days
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. 
+
+```{r Average Frequency of Login days}
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  ggplot(aes(avg_frequency_login_days_interval, group = churn)) +
+  geom_bar(aes
+           (y = ..prop.., 
+             fill = factor(..x..)), 
+           stat = "count", 
+           show.legend = FALSE) +
+  geom_label(aes(label = percent(..prop..),
+                y = ..prop..), 
+            stat = "count",
+            size = 5,
+            fill = "white") +
+  labs(title = "Proportion of churn/not churn With average frequency of login days",
+       x = "Avg Frequency of login days", 
+       y = "Percentage", 
+       fill = "avg_frequency_login_days_interval") +
+  facet_grid(~stroke) +
+  scale_y_continuous(labels = percent) +
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn"))
+```
+
+#### 3.2.3 Average transaction value
+
+> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. 
+
+```{r Smoke}
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
+  ggplot(aes(membership_category, group = churn)) +
+  geom_bar(aes
+           (y = avg_transaction_value, 
+             fill = membership_category, 
+           show.legend = FALSE)) +
+   labs(title = "Avg transaction value with Membership category",
+       x = "Membership category", 
+       y = "Avg Transaction value", 
+       fill = "membership_category") +
+  facet_grid(~churn) +
+  coord_flip()
+```
+
+
+#### 3.2.5 BMI & Stroke
+
+> Patients with stroke have higher average BMI, but effect size is small. 
+
+```{r BMI effect size}
+strokedataset %>% 
+  mutate(stroke = recode(stroke, "1" = "Stroke", "0" = "No Stroke")) %>%
+  ggbetweenstats(
+    x = stroke,
+    y = bmi,
+    plot.type = "box")
+```
+
+#### 3.2.6 Glucose level
+
+> Effect size is small for females but medium for males. Patients with stroke have higher average glucose level. Male stroke patients saw a higher average glucose level than female stroke patients. 
+
+```{r Avg Glucose Level Effect Size Across Gender}
+strokedataset_1 %>%
+  mutate(stroke = recode(stroke, "1" = "Stroke", "0" = "No Stroke")) %>%
+  grouped_ggbetweenstats(
+    x = stroke,
+    y = avg_glucose_level,
+    grouping.var = gender,
+    plot.type = "box")
+```
+
+#### 3.2.7 Age & Stroke
+
+> Effect size is large. Patients who have stroke are mostly older than patients who have no stroke. 
+
+```{r Age}
+strokedataset %>% 
+  mutate(stroke = recode(stroke, "1" = "Stroke", "0" = "No Stroke")) %>%
+  ggbetweenstats(
+    x = stroke,
+    y = age,
+    plot.type = "box")
+```
+
+### 3.3 Correlation Study {.tabset}
+
+> Prep and bake. Because data is imbalanced, minority group is up sampled. 
+
+```{r Reciped for EDA}
+library(themis)
+
+reciped_for_EDA <- recipe(formula = stroke ~ .,
+                          data = strokedataset) %>%
+  step_rm(id) %>%
+  themis::step_upsample(stroke) %>%
+  step_impute_knn(bmi) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+baked_for_EDA <- reciped_for_EDA %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+```
+
+
+```{r}
+baked_for_EDA %>% count(stroke)
+```
+
+> Age, ever_married, avg_glucose_level, heart_disease and hypertension appears to have the highest strength in relationship with stroke (>0.2 corr).
+
+#### 3.3.1 Scatter Plot 
+
+```{r Scatter PLot}
+baked_for_EDA %>%
+  select(age, bmi, avg_glucose_level) %>%
+  ggpairs()
+```
+
+#### 3.3.2 Correlation Matrix
+
+```{r Correlation Matrix}
+baked_for_EDA %>% 
+  as.matrix(.) %>% 
+  rcorr(.) %>% 
+  tidy(.) %>% 
+  mutate(absolute_corr = abs(estimate)
+  ) %>% 
+  rename(variable1 = column1,
+         variable2 = column2,
+         corr = estimate) %>% 
+  filter(variable1 == "stroke" | variable2 == "stroke") %>% 
+  datatable()
+```
+### {-}
+
+## 4. Predictive Model
+
+> Four predictive models were derived. Model A includes all variables, while Model B focuses on variables with effect sizes and correlation (age, ever_married, avg_glucose_level, heart_disease and hypertension). 
+
+> Model C is derived based on a refinement of both Model A and B based on variable importance, while Model XG seeks to improve on the best model. 
+
+> Because sample data is highly imbalanced (due to natural rare occurrence of stroke), the sample data was tested using step_upsample, step_downsample and step_rose.
+
+### 4.1. Split
+
+> Preparation
+
+```{r}
+set.seed(22070501)
+
+stroke_split <- strokedataset %>%  
+  initial_split(prop = 0.80,
+                strata = "stroke")
+```
+
+> Execution
+
+```{r}
+stroke_training <- stroke_split %>% training()
+stroke_testing <- stroke_split %>% testing()
+```
+
+### 4.2. Pre-Process
+
+> Feature Engineering
+
+```{r}
+## Recipe 1 ----
+reciped_1 <- recipe(stroke ~ . , 
+                    data = stroke_training) %>%
+  step_rm(id) %>%
+  step_impute_knn(bmi) %>%
+  themis::step_upsample(stroke) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+baked_training_1 <- reciped_1 %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+## Recipe 2 ----
+reciped_2 <- recipe(stroke ~ age + avg_glucose_level + heart_disease +
+                    hypertension + ever_married,
+                    data = stroke_training) %>%
+  step_BoxCox(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_rose(stroke) %>%
+  step_interact(terms = ~ avg_glucose_level:starts_with("hypertension")) %>%
+  step_interact(terms = ~ avg_glucose_level:starts_with("heart_disease"))
+
+baked_training_2 <- reciped_2 %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+## Recipe 3 ----
+reciped_3 <- recipe(stroke ~ age + avg_glucose_level + bmi +
+                    heart_disease + hypertension + ever_married + smoking_status,
+                    data = stroke_training) %>%
+  step_impute_knn(bmi) %>%
+  themis::step_downsample(stroke) %>%
+  step_BoxCox(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_interact(terms = ~ bmi:(starts_with("hypertension")
+                + starts_with("smoking_status") + starts_with("heart_disease"))) 
+
+baked_training_3 <- reciped_3 %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+## Recipe 4 ----
+
+# reciped_4 <- recipe(stroke ~ age + avg_glucose_level + heart_disease +
+#                    hypertension + ever_married,
+#                    data = stroke_training) %>%
+#  step_BoxCox(all_numeric_predictors()) %>%
+#  step_normalize(all_numeric_predictors()) %>%
+#  step_dummy(all_nominal_predictors()) %>%
+#  step_rose(stroke) %>%
+#  step_interact(terms = ~ avg_glucose_level:
+#                  (starts_with("heart_disease") + 
+#                     starts_with("hypertension"))) %>%
+#  step_interact(terms = ~ age:
+#                  (starts_with("heart_disease") + 
+#                     starts_with("hypertension")))
+
+#baked_training_4 <- reciped_4 %>%
+#  prep(retain = TRUE) %>%
+#  bake(new_data = NULL)
+```
+
+### 4.3. Fit
+
+```{r}
+library(usemodels)
+
+## RF Model ----
+model_RF <- rand_forest() %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger",
+             importance = "impurity") %>% 
+  set_args(mtry = tune())
+
+## XG Boost Model ----
+XG_BOOST <-  boost_tree(trees = 1000,
+                        mtry = tune(),
+                        min_n = tune(),
+                        learn_rate = tune(),
+                        tree_depth = tune(),
+                        sample_size = tune()
+                        ) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+```
+
+### 4.4. Tune
+
+> Using `workflows::``workflow()`
+
+```{r}
+library(workflows)
+
+## RF Model A
+workflow_RF_A <- workflow() %>% 
+  add_recipe(reciped_1) %>% 
+  add_model(model_RF)
+
+## RF Model B
+workflow_RF_B <- workflow() %>% 
+  add_recipe(reciped_2) %>% 
+  add_model(model_RF)
+
+## RF Model C
+workflow_RF_C <- workflow() %>% 
+  add_recipe(reciped_3) %>% 
+  add_model(model_RF)
+
+## RF Model D
+#workflow_RF_D <- workflow() %>% 
+#  add_recipe(reciped_4) %>% 
+#  add_model(model_RF)
+
+## XG Boost Model
+workflow_XG <- workflow() %>% 
+  add_recipe(reciped_2) %>% 
+  add_model(XG_BOOST)
+
+#workflow_XG_2 <- workflow() %>% 
+#  add_recipe(reciped_4) %>% 
+#  add_model(XG_BOOST)
+```
+
+> Cross-validation (cv)
+
+```{r}
+set.seed(22070502)
+
+### RF Cross Validation
+cv10 <- stroke_training %>% 
+  vfold_cv(v = 10)
+
+cv10rose <- stroke_training %>%
+  vfold_cv(repeats = 5, 
+           strata = stroke) 
+
+grid_RF <- expand.grid(mtry = c(2:5))
+
+### XG Boost Cross Validation
+
+XG_grid <- 
+  grid_max_entropy(
+    mtry(c(5L, 10L)),
+    min_n(c(10L, 40L)),
+    learn_rate(c(-2, -1)),
+    tree_depth(c(5L, 10L)),
+    sample_prop(c(0.5, 1.0)),
+    size = 20)
+```
+
+> Parallel Processing (for Expedited/speedy Modeling)
+
+```{r}
+library(doParallel)
+registerDoParallel()
+
+### RF Tuning
+set.seed(22070503)
+tuned_RF_A <- workflow_RF_A %>% 
+  tune_grid(resamples = cv10,
+            grid = grid_RF,
+            metric = metric_set(accuracy, roc_auc, f_meas))
+
+set.seed(22070504)
+tuned_RF_B <- workflow_RF_B %>% 
+  tune_grid(resamples = cv10rose,
+            grid = grid_RF,
+            metric = metric_set(accuracy, roc_auc, f_meas))
+
+set.seed(22070505)
+tuned_RF_C <- workflow_RF_C %>% 
+  tune_grid(resamples = cv10,
+            grid = grid_RF,
+            metric = metric_set(accuracy, roc_auc, f_meas))
+
+#set.seed(112806)
+#tuned_RF_D <- workflow_RF_D %>% 
+#  tune_grid(resamples = cv10,
+#            grid = grid_RF,
+#            metric = metric_set(accuracy, roc_auc, f_meas))
+
+### XG Boost Tuning
+library(finetune)
+
+set.seed(22070506)
+tuned_XG <- workflow_XG %>% 
+  tune_grid(
+    resamples = cv10,
+    grid = XG_grid,
+    control = control_grid(save_pred = T))
+
+#set.seed(112808)
+#tuned_XG_2 <- workflow_XG_2 %>% 
+#  tune_grid(
+#    resamples = cv10_XG,
+#    grid = XG_grid,
+#    control = control_grid(save_pred = T))
+```
+
+
+```{r Best Model}
+# RF
+tuned_RF_A_results <- tuned_RF_A %>% 
+  collect_metrics()
+
+tuned_RF_B_results <- tuned_RF_B %>% 
+  collect_metrics()
+
+tuned_RF_C_results <- tuned_RF_C %>% 
+  collect_metrics()
+
+#tuned_RF_D_results <- tuned_RF_D %>% 
+#  collect_metrics()
+
+finalized_parameters_RF_A <- tuned_RF_A %>% 
+  select_best(metric = "roc_auc")
+
+finalized_parameters_RF_B <- tuned_RF_B %>% 
+  select_best(metric = "roc_auc")
+
+finalized_parameters_RF_C <- tuned_RF_C %>% 
+  select_best(metric = "roc_auc")
+
+#finalized_parameters_RF_D <- tuned_RF_D %>% 
+#  select_best(metric = "roc_auc")
+
+# XG Boost
+tuned_XG_results <- tuned_XG %>% 
+  collect_metrics()
+
+finalized_parameters_XG <- tuned_XG %>% 
+  select_best("roc_auc")
+
+#tuned_XG_results_2 <- tuned_XG_2 %>% 
+#  collect_metrics()
+
+#finalized_parameters_XG_2 <- tuned_XG_2 %>% 
+#  select_best("roc_auc")
+```
+
+
+```{r}
+### Finalize Workflow ----
+
+# RF
+finalized_workflow_RF_A <- workflow_RF_A %>% 
+  finalize_workflow(finalized_parameters_RF_A)
+
+finalized_workflow_RF_B <- workflow_RF_B %>% 
+  finalize_workflow(finalized_parameters_RF_B)
+
+finalized_workflow_RF_C <- workflow_RF_C %>% 
+  finalize_workflow(finalized_parameters_RF_C)
+
+#finalized_workflow_RF_D <- workflow_RF_D %>% 
+#  finalize_workflow(finalized_parameters_RF_D)
+
+# XG Boost
+finalized_workflow_XG_BOOST <- workflow_XG %>% 
+  finalize_workflow(finalized_parameters_XG)
+
+#finalized_workflow_XG_BOOST_2 <- workflow_XG_2 %>% 
+#  finalize_workflow(finalized_parameters_XG_2)
+```
+
+### 4.5. Assess
+
+```{r}
+### Final Trained Model ----
+
+fit_RF_A <- finalized_workflow_RF_A %>% 
+  last_fit(stroke_split)
+
+fit_RF_B <- finalized_workflow_RF_B %>% 
+  last_fit(stroke_split)
+
+fit_RF_C <- finalized_workflow_RF_C %>% 
+  last_fit(stroke_split)
+
+#fit_RF_D <- finalized_workflow_RF_D %>% 
+#  last_fit(stroke_split)
+
+fit_XG <- finalized_workflow_XG_BOOST %>% 
+  last_fit(stroke_split)
+
+#fit_XG_2 <- finalized_workflow_XG_BOOST_2 %>% 
+#  last_fit(stroke_split)
+```
+
+> Model Performance 
+
+```{r}
+performance_RF_A <- fit_RF_A %>% 
+  collect_metrics()
+
+performance_RF_B <- fit_RF_B %>% 
+  collect_metrics()
+
+performance_RF_C <- fit_RF_C %>% 
+  collect_metrics()
+
+#performance_RF_D <- fit_RF_D %>% 
+#  collect_metrics()
+
+performance_XG <- fit_XG %>% 
+  collect_metrics()
+
+#performance_XG_2 <- fit_XG_2 %>% 
+#  collect_metrics()
+```
+
+> Collect predictions
+
+```{r}
+prediction_RF_A <- fit_RF_A %>% 
+  collect_predictions()
+
+prediction_RF_B <- fit_RF_B %>% 
+  collect_predictions()
+
+prediction_RF_C <- fit_RF_C %>% 
+  collect_predictions()
+
+#prediction_RF_D <- fit_RF_D %>% 
+#  collect_predictions()
+
+prediction_XG <- fit_XG %>% 
+  collect_predictions()
+
+#prediction_XG_2 <- fit_XG_2 %>% 
+#  collect_predictions()
+```
+
+> Comparing Models 
+
+```{r Comparing 4 models}
+performance_RF_A <- performance_RF_A %>% 
+  mutate(algorithm = "Model A (Recipe 1: upsample, all features)")
+
+performance_RF_B <- performance_RF_B %>% 
+  mutate(algorithm = "Model B (Recipe 2, step_rose, best effect + interact glucose)")
+
+performance_RF_C <- performance_RF_C %>% 
+  mutate(algorithm = "Model C (Recipe 3, downsaple, var impr + interact)")
+
+#performance_RF_D <- performance_RF_D %>% 
+#  mutate(algorithm = "Model CD(Recipe 4, step_rose, best effect + interact glucose and age)")
+
+performance_XG <-  performance_XG %>% 
+  mutate(algorithm = "Model XG Boost (Recipe 2, step_rose, best effect + interact glucose)")
+
+#performance_XG_2 <-  performance_XG_2 %>% 
+#  mutate(algorithm = "Model XG Boost 2 (Recipe 4, step_rose, best effect + interact glucose and age)")
+
+bind_rows(performance_RF_A,
+          performance_RF_B,
+          performance_RF_C,
+          #performance_RF_D,
+          performance_XG) %>%
+  select(-.estimator, -.config) %>%
+  pivot_wider(names_from = .metric,
+              values_from = .estimate) %>%
+  datatable() %>%
+  formatRound(columns = c("accuracy", "roc_auc"),
+              digits = 2)
+```
+
+> Confusion Matrix
+
+```{r}
+CM_builder_for_MGMT655 <- 
+  function(data, outcome)
+{ 
+  {data} %>% 
+    conf_mat({outcome}, .pred_class) %>% 
+    pluck(1) %>% 
+    as_tibble() %>% 
+    mutate(cm_colors = ifelse(Truth == "1" & Prediction == "1", "True Positive",
+                              ifelse(Truth == "1" & Prediction == "0", "False Negative",
+                                     ifelse(Truth == "0" & Prediction == "1", 
+                                            "False Positive", 
+                                            "True Negative")
+                              )
+    )
+    ) %>% 
+    ggplot(aes(x = Prediction, y = Truth)) + 
+    geom_tile(aes(fill = cm_colors), show.legend = F) +
+    scale_fill_manual(values = c("True Positive" = "green",
+                                 "False Negative" = "red",
+                                 "False Positive" = "red",
+                                 "True Negative" = "green")
+    ) + 
+    geom_text(aes(label = n), color = "white", size = 10) + 
+    geom_label(aes(label = cm_colors), vjust = 2
+    ) + 
+    theme_fivethirtyeight() + 
+    theme(axis.title = element_text()
+    ) 
+}
+```
+
+```{r}
+CM_builder_for_MGMT655(prediction_XG, "stroke")
+```
+
+> Null Model
+
+```{r}
+model_baseline <- null_model() %>% 
+  set_engine("parsnip") %>% 
+  set_mode("classification")
+
+workflow_baseline <- workflow() %>% 
+  add_recipe(reciped_1) %>% 
+  add_model(model_baseline) %>% 
+  fit_resamples(cv10,
+                control = control_resamples(save_pred = T))
+
+performance_baseline <- workflow_baseline %>% collect_metrics()
+prediction_baseline <- workflow_baseline %>% collect_predictions()
+```
+
+> Comparing Model Performances
+
+```{r}
+
+prediction_RF_A <- prediction_RF_A %>% 
+  mutate(algorithm = "Random Forest (Recipe 1, upsample, all features)")
+
+prediction_RF_B <- prediction_RF_B %>% 
+  mutate(algorithm = "Random Forest (Recipe 2, step_rose, best effect + interact)")
+
+prediction_RF_C <- prediction_RF_C %>% 
+  mutate(algorithm = "Random Forest (Recipe 3, downsample, var impt + interact)")
+
+#prediction_RF_D <- prediction_RF_D %>% 
+#  mutate(algorithm = "Random Forest (Recipe 4, step_rose, best effect + interact glucose and age)")
+
+prediction_XG <-  prediction_XG %>% 
+  mutate(algorithm = "XG Boost (Recipe 2, step_rose, best effect + interact)")
+
+#prediction_XG_2 <-  prediction_XG_2 %>% 
+#  mutate(algorithm = "XG Boost 2 (Recipe 4, step_rose, best effect + interact glucose and age)")
+
+prediction_baseline <- prediction_baseline %>%
+  mutate(algorithm = "Baseline model")
+
+comparing_predictions <- bind_rows(prediction_RF_A,
+                                   prediction_RF_B,
+                                   prediction_RF_C,
+                                   prediction_XG,
+                                   prediction_baseline)
+```
+
+> ROC-AUC Curve
+
+```{r}
+comparing_predictions %>% 
+  group_by(algorithm) %>% 
+  roc_curve(truth = stroke,
+            .pred_1) %>% 
+  autoplot() +
+  ggthemes::scale_color_wsj() +
+  labs(title = "Comparisons of Predictive Power\nbetween models for Stroke",
+       subtitle = "XG Boost Performs Better in Prediction",
+       color = "Prediction Tools") +
+  theme(legend.position = c(.65, .15))
+```
+
+> Feature Importance
+
+```{r}
+library(vip)
+
+# XG Boost 
+
+finalized_model <- finalized_workflow_XG_BOOST %>% 
+  fit(data = strokedataset)
+
+finalized_model %>% 
+  pull_workflow_fit() %>% 
+  vip() +
+  labs(
+    y = NULL,
+    title = "Feature (Variable) Importance for Predicting Stroke",
+    subtitle = "Age has the highest importance")
+```
+
+> Deploy Machine Learning Algorithm to Dashboard
+
+```{r}
+finalized_model %>% saveRDS("finalized_stroke_model.rds")
+```
+
+> Save R Data 
+
+```{r}
+save.image("Rmarkdown.RData")
+```
+
+## 5. Executive Summary
+
+### 5.1. Evidence
+
+* We tested 4 models for this predictive modeling task.
+
+* Our first model`Random Forest ALgorithm A` up-sampled the minority class (non-stroke) and included all variables, excluding ID. 
+
+* Based on our correlation analysis of all variables, **age**, **heart disease**, **average glucose level**, **hypertension** and **marriage** had the strongest impact on stroke. 
+
+* Hence, the second model `Random Forest Algorithm B` focused on these 5 variables. An interaction between average glucose level, hypertension and heart disease was also factored into the recipe. 
+
+* Based on variable importance graph, the variables "smoking_status" and "bmi" was included into `Random Forest Algorithm C` in an attempt to improve overall performance. 
+
+* Based on `Random Forest Algorithm B`, we attempted to use the same variables with the computation method of XG Boost to improve the model performance.
+
+* Of the 4 models, the fourth model `XG Boost Algorithm` performed better with higher roc_auc of **0.86** and higher accuracy of **0.90**, compared to the other three models.
+
+* The top three variables that had the highest importance on the prediction results are **age**, followed by **hypertension** and **heart disease**.
+
+### 5.2. Interpretation
+
+* `XG Boost Algorithm` performed better overall with a roc_auc of **0.86** and accuracy of **0.90**, giving a 10% chance of error. 
+
+* The model focused on the top 5 variables that have the largest effect on stroke based on the feature importance graph, and the relationship between average glucose level to hypertension and heart disease. 
+
+* This implies the significance of focusing on the most important features during the predictive modelling task, and also research on interaction between variables to achieve optimal performance.
+
+* In terms of variable importance, the top 3 variables are age, heart disease and hypertension. The effect size of these variables means `higher level of age, exisiting conditions of hypertension or heart disease` increases the chances of stroke detected. 
+
+### 5.3. Recommendations
+
+* The key use application for this predictive model is in determining whether a person is likely to be diagnosed with stroke based on their lifestyle and health measurements. Hence, the key stakeholders whom would most benefit from this predictive model are `(1) general practitioners`, `(2) patients and family members` and `(3) the public`. 
+
+* This algorithm takes into account the 5 most important variables to produce a evidence-based prediction of the likelihood that a patient has stroke. For `general practitioners`, this predictive model is a useful data tool that can be used in conjunction with qualitative checks conducted based on their expertise. This would help them make **more accurate diagnosis** and recommend patients for further test (i.e. CT scan) and treatments. 
+
+* In addition, this predictive model to **stratify patients into risk groups**. Without this tool, patients would belong to either stroke-positive or stroke-negative groups. However, with this predictive model that produces **quantitative likelihood of getting stroke**, general practitioners can derive a better understanding of the risk levels of a patient getting stroke (e.g. >50%) and thereby conduct necessary checks and provide pertinent advice on lifestyle plans to mitigate the onset of stroke.
+
+* One of the drivers for this predictive model study was the [sharp rise in stroke cases in Singapore](https://www.straitstimes.com/singapore/8300-stroke-cases-admitted-to-public-hospitals-in-2018-public-outreach-campaign-starts) leading to health implications, which could have been avoided through early detection, so that lifestyle modifications and treatment can be provided.
+
+* Hence, it is recommended that this prediction model be **made openly available to public to access and input their lifestyle factors and health measurements** to arrive at a predicted percentage likelihood of being stroke-positive. Singaporeans with higher likelihood of stroke (due to family history of stroke risk factors or lifestyle conditions) could also use this model to understand the risks so that they can make informed decisions on their next steps.
+
+## Limitations
+
+* This study applies to stroke only. 
+
+* The results derived from this predictive model only indicates whether a person is likely to be stroke-positive or stroke-negative. It does not provide stroke diagnosis. 
+
+* This model is easy and accessible for the public to use as it takes into account mainly lifestyle variables that are easily obtained. 
+
+* However, the data set lacks other potential bio makers that are more salient in predicting stroke cases. Hence, further data collection and consultation with medical professionals must be pursued before this model can be applied to test for stroke. 
+
+## References
+
+* [Kaggle Data](https://www.kaggle.com/fedesoriano/stroke-prediction-dataset)
+
+* [Stroke cases in Singapore](https://www.straitstimes.com/singapore/8300-stroke-cases-admitted-to-public-hospitals-in-2018-public-outreach-campaign-starts)
+
+* [Stroke, how to prevent and what to look out for](https://www.straitstimes.com/singapore/how-do-i-prevent-stroke-and-what-should-i-look-out-for)
+
+* [Singapore's stroke care system](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7399214/)
+
+* [Stroke illiteracy in Singapore](https://annals.edu.sg/pdf/43VolNo9Sep2014/MemberOnly/V43N9p454.pdf)
+
+* [Time window consideration for Thrombolysis](https://annals.edu.sg/pdf/43VolNo9Sep2014/MemberOnly/V43N9p454.pdf)
+
+* [Preventive and early detection services](https://annals.edu.sg/pdf/43VolNo9Sep2014/MemberOnly/V43N9p454.pdf)
+
+* [BMI interpretation](https://www.healthhub.sg/live-healthy/179/weight_putting_me_at_risk_of_health_problems)
+
+* [Hedges' g interpretation](https://www.statisticshowto.com/hedges-g/)
+
+## Appendix
+
+* Nil.
+
+## Contribution Statement
+
+> The `pRoject` team put together by Prof. Roh (randomly) worked together to deliver the assignment. Together we defined the problem, identifed the data source and segregated tasks to deliver the final output.
+
+  ***R-script** was led by `Teammate A`
+
+  ***Shiny-dashboard** was led by `Teammate B`
+
+  ***R-markdown** was led by `Teammate A & B`
+
+> `Teammate A's` contributions:
+
+1)	Collaborated with teammate to formulate the business problem. 
+
+2)  Conducted research to discover interaction between variables.
+  
+2)	Created and developed the R-script – Transform & EDA, Split, Pre-process, Fit, Tune and Assess.
+  
+3)	Analyzed data to identify top variables that impact stroke.
+  
+4)	Designed recipes and tested to find the best model with highest roc_auc/accuracy score.
+  
+5)	Finalized the models and tested model on Dashboard. 
+  
+6)	Partnered with teammate to draft the Executive summary – Evidence, Interpretation and Recommendations.
+  
+7)	Created the pitch deck for the proposal and submit.
+  
+>  `Teammate B's` contributions:
+
+1) Collaborated with team to develop the R-script – Transform & EDA, Split, Pre-process, Fit, Tune and Assess.
+
+2) Collaborated to test and find the best recipe and model with highest roc_auc score.
+
+3)  Debugged error messages preventing successful deployment of R-dashboard .
+  
+4)  Updated the dashboard according to our features to create the Stroke Prediction App.
+ 
+5)  Partnered with team to draft the Rmarkdown file.
+
+6)  Helped in writing the Executive Summary – Evidence, Interpretation and Recommendations.
+
+<br>
