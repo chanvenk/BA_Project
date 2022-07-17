@@ -59,9 +59,10 @@ code { color: rgb(205,79,57) }
 > Load packages
 
 ```{r Load Package}
-pacman::p_load(tidyverse, lubridate, tidymodels, skimr, 
-               GGally, ggstatsplot, Hmisc, broom, plotly, 
-               DT, doParallel, parsnip, themis, ranger,
+pacman::p_load(tidyverse, lubridate, 
+               tidymodels, 
+               skimr, GGally, ggstatsplot, Hmisc, broom,
+               plotly, DT, doParallel, parsnip, themis, ranger,
                ggpubr, vip, ggthemes
 )
 ```
@@ -70,14 +71,14 @@ pacman::p_load(tidyverse, lubridate, tidymodels, skimr,
 
 Variable (Feature) Name    | Description
 :--------------------------|:--------------------------------------------------------------------
-`churn`                   | `Yes` if the patient had a stroke or `No` if not
-points_in_wallet          | Points in wallet of the customer
-membership_category       | "No Membership", "Basic Membership", "Premium Membership", "Silver                              Membership", "Gold Membership", "Platinum Membership"
+`Churn`                | `Yes` if the patient has churned or `No` if not
+points_in_wallet          | # Points in the customer's wallet
+membership_category       | "No Membership", "Basic Membership", "Premium Membership", "Silver Membership", "Gold Membership", "Platinum Membership"
 avg_transaction_value     | Average transaction value of the customer
-avg_time_spent            | Average time spent on the website by the customer
-avg_with_company          | Time since the joining date of the customer
+avg_time_spent            | Average time (in minutes) spent on the website by the customer
+age_with_company          | # Days since the joining date of the customer
 age                       | Age of the customer
-avg_frequency_login_days_interval  | Average frequency the customer logs in       ("0-10","10-20","20-30",">30")             
+avg_frequency_login_days_interval  | Average # consecutive days the customer logs in (1 = "1-10",2 = "11-20",3 = "21-30",4 = ">30")             
 
 ```{r Import Data}
 churn_df <- read_csv("churn_dataset_train.csv")
@@ -91,7 +92,7 @@ churn_df %>%
 ## 3. Transform & EDA
 
 ```{r}
-skim(churn_df) 
+skim(churn_df)
 ```
 
 ```{r Transform Data}
@@ -102,11 +103,14 @@ churn_cleaned <- churn_df %>%
   drop_na() %>%
   mutate(age_with_company = difftime(Sys.Date(),joining_date, units = "days")) %>%
   mutate(avg_frequency_login_days_interval =
-           ifelse(as.numeric(avg_frequency_login_days) > 0 & as.numeric(avg_frequency_login_days) <= 10, 1,
-                  ifelse(as.numeric(avg_frequency_login_days) > 10 & as.numeric(avg_frequency_login_days) <= 20, 2,
-                         ifelse(as.numeric(avg_frequency_login_days) > 20 & as.numeric(avg_frequency_login_days) <= 30, 3,
-                                ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
-                         )))) %>%
+           ifelse(as.numeric(avg_frequency_login_days) > 0 & 
+                    as.numeric(avg_frequency_login_days) <= 10, 1,
+           ifelse(as.numeric(avg_frequency_login_days) > 10 & 
+                    as.numeric(avg_frequency_login_days) <= 20, 2,
+           ifelse(as.numeric(avg_frequency_login_days) > 20 & 
+                    as.numeric(avg_frequency_login_days) <= 30, 3,
+            ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
+          )))) %>%
   select(-medium_of_operation,
          -referral_id, -customer_id, -security_no, -Name) %>%
   mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>%
@@ -144,7 +148,7 @@ ggthemr("fresh")
 churn_cleaned %>%
   mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
   ggplot(aes(churn)) +
-  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5) +
   scale_y_continuous(labels = percent) +
   geom_label(aes(label = percent((..count..)/sum(..count..)),
                 y = (..count..)/sum(..count..)), 
@@ -153,7 +157,10 @@ churn_cleaned %>%
             fill = "white") +
   labs(title = "Proportion of Churned Customers",
        x = "Churn",
-       y = "Proportion of Customers")
+       y = "Proportion of Customers") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(size = 10))
 ```
 
 #### 3.1.2 Age
@@ -192,11 +199,11 @@ churn_cleaned %>%
   geom_vline(aes(xintercept = mean(points_in_wallet)),
              linetype = "dashed",
              color = "tomato3") +
-  annotate(geom = "text",
-           label = "Mean = 28.9",
-           color = "tomato3",
-           x = 40, 
-           y = 0.05) +
+  # annotate(geom = "text",
+  #          label = "Mean = 28.9",
+  #          color = "tomato3",
+  #          x = 40, 
+  #          y = 0.05) +
   labs(title = "Points in wallet distribution of customers",
        subtitle = "<Will fill in something here>",
        y = "Density",
@@ -214,16 +221,18 @@ churn_cleaned %>%
   geom_vline(aes(xintercept = mean(avg_time_spent)),
              linetype = "dashed",
              color = "tomato3") +
-  annotate(geom = "text",
-           label = "Mean = 6250",
-           color = "tomato3",
-           x = 135, 
-           y = 0.013) +
+  # annotate(geom = "text",
+  #          label = "Mean = 6250",
+  #          color = "tomato3",
+  #          x = 135, 
+  #          y = 0.013) +
   labs(title = "Average time spent by Customers",
        y = "Density",
-       x = "Average time spent")
+       x = "Avg Time (Minutes)") + 
+  theme_bw() #+
+  #theme(axis.text.x = element_text(size = 10))
 
-summary(strokedataset$avg_glucose_level)
+summary(churn_cleaned$avg_time_spent)
 ```
 ### {-}
 
@@ -239,7 +248,7 @@ summary(strokedataset$avg_glucose_level)
 
 ```{r Membership Category}
 churn_cleaned %>%
-  mutate(stroke = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
   ggplot(aes(membership_category, group = churn)) +
   geom_bar(aes
            (y = ..prop.., 
@@ -257,7 +266,11 @@ churn_cleaned %>%
        fill = "membership_category") +
   facet_grid(~churn) +
   scale_y_continuous(labels = percent) +
-  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn"))
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn")) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 10), 
+        strip.text.x = element_text(color = "white"),
+        strip.background.x = element_rect(fill = "black"))
 ```
 #### 3.2.2 Average Frequency of login days
 
@@ -266,10 +279,13 @@ churn_cleaned %>%
 ```{r Average Frequency of Login days}
 churn_cleaned %>%
   mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  mutate(avg_frequency_login_days_interval = recode(avg_frequency_login_days_interval,
+                                                    "1" = "1-10", "2" = "11-20", "3" = "21-30", "4" = ">30")
+         ) %>% 
   ggplot(aes(avg_frequency_login_days_interval, group = churn)) +
   geom_bar(aes
            (y = ..prop.., 
-             fill = factor(..x..)), 
+            fill = factor(..x..)), 
            stat = "count", 
            show.legend = FALSE) +
   geom_label(aes(label = percent(..prop..),
@@ -277,32 +293,47 @@ churn_cleaned %>%
             stat = "count",
             size = 5,
             fill = "white") +
-  labs(title = "Proportion of churn/not churn With average frequency of login days",
-       x = "Avg Frequency of login days", 
+  labs(title = "Proportion of churn/not churn with average frequency of login days",
+       x = "Avg Frequency of Login Days", 
        y = "Percentage", 
        fill = "avg_frequency_login_days_interval") +
-  facet_grid(~stroke) +
+  facet_grid(~churn) +
   scale_y_continuous(labels = percent) +
-  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn"))
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn")) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(color = "white"),
+        strip.background.x = element_rect(fill = "black"))
 ```
 
 #### 3.2.3 Average transaction value
-
+> [KL]need to fix. trying to show average transaction value per membership. the $ label and axis is not showing
 > Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. 
 
-```{r Smoke}
+```{r Average Transaction Value}
 churn_cleaned %>%
   mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
-  ggplot(aes(membership_category, group = churn)) +
+  group_by(membership_category, churn) %>% 
+  summarise(avg_transaction_value_by_membership = mean(avg_transaction_value)) %>% 
+  ggplot(aes(x = membership_category, group = churn)) +
   geom_bar(aes
-           (y = avg_transaction_value, 
-             fill = membership_category, 
-           show.legend = FALSE)) +
+           (y = avg_transaction_value_by_membership, 
+             fill = membership_category), 
+           stat = "identity",
+       #    fun.y = "mean",
+           show.legend = FALSE) +
+  geom_text(aes(x= membership_category, y=avg_transaction_value_by_membership, 
+                label= dollar(avg_transaction_value_by_membership)),
+            hjust=-0.8, vjust=-1,
+            size=5, colour="white", fontface="plain"#, angle=360
+            ) + 
    labs(title = "Avg transaction value with Membership category",
        x = "Membership category", 
        y = "Avg Transaction value", 
        fill = "membership_category") +
   facet_grid(~churn) +
+  scale_y_continuous(labels = label_dollar()) + 
   coord_flip()
 ```
 
