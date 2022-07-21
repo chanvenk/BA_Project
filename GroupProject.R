@@ -39,11 +39,13 @@ churn_cleaned <- churn_df %>%
     age, avg_time_spent, points_in_wallet,
     age_with_company, avg_transaction_value,
   avg_frequency_login_days
-  ),as.numeric)) %>%
+  ),as.numeric)) %>% 
   mutate(churn1 = fct_relevel(churn, "Yes"))
 churn_cleaned <- churn_cleaned %>% 
   select(churn, points_in_wallet, membership_category, avg_transaction_value,
-         avg_time_spent, age_with_company, age, avg_frequency_login_days_interval)
+         avg_time_spent, age_with_company, age, avg_frequency_login_days_interval, 
+         preferred_offer_types, internet_option, days_since_last_login, 
+         used_special_discount, past_complaint, feedback, complaint_status)
 
 # EDA using ggapirs ----
 library(GGally)
@@ -57,6 +59,31 @@ churn_cleaned %>%
   ) + 
   theme_bw()
 ## Correlation values 
+recipe_eda <- 
+  recipe(formula = churn ~ ., data = churn_cleaned) %>% 
+  step_normalize(points_in_wallet, avg_transaction_value, avg_time_spent, age_with_company, age, 
+) %>% 
+  step_dummy(membership_category, avg_frequency_login_days_interval, region_category, 
+             internet_option, past_complaint, used_special_discount, past_complaint, feedback,
+             complaint_status)
+
+baked_eda <- recipe_eda %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+baked_eda %>% 
+  as.matrix(.) %>% 
+  rcorr(.) %>% 
+  tidy(.) %>% 
+  mutate(absolute_corr = abs(estimate)
+  ) %>% 
+  rename(variable1 = column1,
+         variable2 = column2,
+         corr = estimate) %>% 
+  filter(variable1 == "churn" | variable2 == "churn") %>% 
+  datatable()
+
+
 churn_cleaned %>% 
   select(churn, where(is.numeric)
   ) %>% 
@@ -70,24 +97,8 @@ churn_cleaned %>%
   ) %>% 
   datatable()
 
-# Splitting the data ----
-set.seed(100)
-
-churn_split <- churn_cleaned %>% 
-  initial_split(prop = 0.8)
-
-churn_train <- 
-  churn_split %>% 
-  training() 
-
-churn_test <- 
-  churn_split %>% 
-  testing() # 20%
-
-## Splitting the data into cross validation sets ----
-set.seed(100)
-CV_10 <- churn_train %>% 
-  vfold_cv(v = 10, strata = churn)
+churn_cleaned %>% 
+  ggplot(aes(x = ))
 
 # Function to run the models ----
 workflow_generator <- function(var_recipe, var_model)
@@ -152,7 +163,7 @@ feature_importance_extractor <- function(workflow_data, full_dataset)
 {
   finalized_model <- {workflow_data} %>% fit({full_dataset})
   
-  model_summary <- pull_workflow_fit(finalized_model)$fit
+  model_summary <- extract_fit_parsnip(finalized_model)$fit
   
   feature_importance <- data.frame(importance = model_summary$variable.importance) %>% 
     rownames_to_column("feature") %>% 
@@ -171,6 +182,26 @@ feature_importance_extractor <- function(workflow_data, full_dataset)
 }
 
 
+# Splitting the data ----
+set.seed(100)
+
+churn_split <- churn_cleaned %>% 
+  initial_split(prop = 0.8)
+
+churn_train <- 
+  churn_split %>% 
+  training() 
+
+churn_test <- 
+  churn_split %>% 
+  testing() # 20%
+
+## Splitting the data into cross validation sets ----
+set.seed(100)
+CV_10 <- churn_train %>% 
+  vfold_cv(v = 10, strata = churn)
+
+
 # Recipes ----
 recipe_common <- recipe(churn ~ age + avg_time_spent + points_in_wallet + 
                           age_with_company + avg_transaction_value +
@@ -178,16 +209,30 @@ recipe_common <- recipe(churn ~ age + avg_time_spent + points_in_wallet +
                           avg_frequency_login_days_interval,
                         data = churn_train)
 
+recipe_all <- 
+  recipe(churn ~ age + avg_time_spent + points_in_wallet + 
+           age_with_company + avg_transaction_value +
+           membership_category + 
+           avg_frequency_login_days_interval + preferred_offer_types + internet_option + 
+         days_since_last_login + used_special_discount+ past_complaint+
+         feedback + complaint_status,
+         data = churn_train)
+  
+
+
 recipe_norm_dummy <- 
   recipe_common %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
 
 recipe_up <-   
-  recipe_common %>% 
+  recipe_all %>% 
   step_upsample(churn) %>% 
   step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
+  step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
+  step_poly(points_in_wallet, degree = 2, role = "predictor")
 
 recipe_down <- 
   recipe_common %>% 
@@ -200,7 +245,7 @@ recipe_boxcox <-
   step_BoxCox(all_numeric_predictors()) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors()) %>% 
-  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) #%>% 
   step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
   step_poly(points_in_wallet, degree = 2, role = "predictor")
 
@@ -217,7 +262,15 @@ recipe_yeojohnson <-
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors()) %>% 
   step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) 
-  
+
+recipe_log <- 
+  recipe_common %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_log(points_in_wallet)
+
+
+
 # Models ----
 
 ##Logistic Regression ----
@@ -288,7 +341,8 @@ tuned_RF_up <- workflow_RF_up %>%
 perf_and_pred <- perf_and_pred_generator(workflow_RF_up, tuned_RF_up, churn_split)
 performance_RF_up <- perf_and_pred$perf
 predictions_RF_up <- perf_and_pred$pred
-
+performance_RF_up
+predictions_RF_up %>% f_meas(churn, .pred_class)
 ### Random Forrest Workflow with downsampling ----
 workflow_RF_down <- workflow_generator(recipe_down, model_RF)
 
@@ -299,7 +353,7 @@ tuned_RF_down <- workflow_RF_down %>%
 perf_and_pred <- perf_and_pred_generator(workflow_RF_down, tuned_RF_down, churn_split)
 performance_RF_down <- perf_and_pred$perf
 predictions_RF_down <- perf_and_pred$pred
- 
+performance_RF_down 
 ### Random Forrest Workflow with boxcox ----
 workflow_RF_boxcox <- workflow_generator(recipe_boxcox, model_RF)
 
@@ -312,6 +366,7 @@ perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, ch
 performance_RF_boxcox <- perf_and_pred$perf
 predictions_RF_boxcox <- perf_and_pred$pred
 performance_RF_boxcox
+predictions_RF_boxcox %>% f_meas(churn, .pred_class)
 ### Random Forreest Workflow with YeoJohnson ----
 workflow_RF_yeojohnson <- workflow_generator(recipe_yeojohnson, model_RF)
 
@@ -322,6 +377,18 @@ tuned_RF_yeojohnson <- workflow_RF_yeojohnson %>%
 perf_and_pred <- perf_and_pred_generator(workflow_RF_yeojohnson, tuned_RF_yeojohnson, churn_split)
 performance_RF_yeojohnson <- perf_and_pred$perf
 predictions_RF_yeojohnson <- perf_and_pred$pred
+
+### Random Forrest Workflow with log
+workflow_RF_log <- workflow_generator(recipe_log, model_RF)
+
+tuned_RF_log <- workflow_RF_log %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+perf_and_pred <- perf_and_pred_generator(workflow_RF_log, tuned_RF_log, churn_split)
+performance_RF_log <- perf_and_pred$perf
+predictions_RF_log <- perf_and_pred$pred
+
 
 ### Random Forrest Workflow with rose ----
 workflow_RF_rose <- workflow_generator(recipe_rose, model_RF)
@@ -420,7 +487,8 @@ tuned_xg_boxcox <-
 perf_and_pred <- perf_and_pred_generator(workflow_xg_boxcox, tuned_xg_boxcox, churn_split)
 performance_xg_boxcox <- perf_and_pred$perf
 predictions_xg_boxcox <- perf_and_pred$pred
-
+performance_xg_boxcox
+predictions_xg_boxcox %>% f_meas(churn, .pred_class)
 ### XGBoost with rose  ----
 
 workflow_xg_rose <- workflow_generator(recipe_rose, model_xgb)

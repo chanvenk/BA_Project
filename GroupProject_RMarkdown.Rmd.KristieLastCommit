@@ -59,27 +59,26 @@ code { color: rgb(205,79,57) }
 > Load packages
 
 ```{r Load Package}
-pacman::p_load(tidyverse, lubridate, tidymodels, skimr, 
-               GGally, ggstatsplot, Hmisc, broom, plotly, 
-               DT, doParallel, parsnip, themis, ranger,
-               ggpubr, vip, ggthemes, ggthemr
+pacman::p_load(tidyverse, lubridate, 
+               tidymodels, 
+               skimr, GGally, ggstatsplot, Hmisc, broom,
+               plotly, DT, doParallel, parsnip, themis, ranger,
+               ggpubr, vip, ggthemes
 )
-source("Functions.R")
-#source("GroupProjectRmarkdown.Rdata")
 ```
 
 > Data was sourced from [Kaggle](https://www.kaggle.com/datasets/imsparsh/churn-risk-rate-hackerearth-ml)
 
 Variable (Feature) Name    | Description
 :--------------------------|:--------------------------------------------------------------------
-`churn`                   | `Yes` if the patient had a stroke or `No` if not
-points_in_wallet          | Points in wallet of the customer
-membership_category       | "No Membership", "Basic Membership", "Premium Membership", "Silver                              Membership", "Gold Membership", "Platinum Membership"
+`Churn`                | `Yes` if the patient has churned or `No` if not
+points_in_wallet          | # Points in the customer's wallet
+membership_category       | "No Membership", "Basic Membership", "Premium Membership", "Silver Membership", "Gold Membership", "Platinum Membership"
 avg_transaction_value     | Average transaction value of the customer
-avg_time_spent            | Average time spent on the website by the customer
-avg_with_company          | Time since the joining date of the customer
+avg_time_spent            | Average time (in minutes) spent on the website by the customer
+age_with_company          | # Days since the joining date of the customer
 age                       | Age of the customer
-avg_frequency_login_days_interval  | Average frequency the customer logs in       ("0-10","10-20","20-30",">30")             
+avg_frequency_login_days_interval  | Average # consecutive days the customer logs in (1 = "1-10",2 = "11-20",3 = "21-30",4 = ">30")             
 
 ```{r Import Data}
 churn_df <- read_csv("churn_dataset_train.csv")
@@ -93,7 +92,7 @@ churn_df %>%
 ## 3. Transform & EDA
 
 ```{r}
-skim(churn_df) 
+skim(churn_df)
 ```
 
 ```{r Transform Data}
@@ -104,11 +103,14 @@ churn_cleaned <- churn_df %>%
   drop_na() %>%
   mutate(age_with_company = difftime(Sys.Date(),joining_date, units = "days")) %>%
   mutate(avg_frequency_login_days_interval =
-           ifelse(as.numeric(avg_frequency_login_days) > 0 & as.numeric(avg_frequency_login_days) <= 10, 1,
-                  ifelse(as.numeric(avg_frequency_login_days) > 10 & as.numeric(avg_frequency_login_days) <= 20, 2,
-                         ifelse(as.numeric(avg_frequency_login_days) > 20 & as.numeric(avg_frequency_login_days) <= 30, 3,
-                                ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
-                         )))) %>%
+           ifelse(as.numeric(avg_frequency_login_days) > 0 & 
+                    as.numeric(avg_frequency_login_days) <= 10, 1,
+           ifelse(as.numeric(avg_frequency_login_days) > 10 & 
+                    as.numeric(avg_frequency_login_days) <= 20, 2,
+           ifelse(as.numeric(avg_frequency_login_days) > 20 & 
+                    as.numeric(avg_frequency_login_days) <= 30, 3,
+            ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
+          )))) %>%
   select(-medium_of_operation,
          -referral_id, -customer_id, -security_no, -Name) %>%
   mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>%
@@ -146,7 +148,7 @@ ggthemr("fresh")
 churn_cleaned %>%
   mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
   ggplot(aes(churn)) +
-  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5) +
   scale_y_continuous(labels = percent) +
   geom_label(aes(label = percent((..count..)/sum(..count..)),
                 y = (..count..)/sum(..count..)), 
@@ -155,7 +157,10 @@ churn_cleaned %>%
             fill = "white") +
   labs(title = "Proportion of Churned Customers",
        x = "Churn",
-       y = "Proportion of Customers")
+       y = "Proportion of Customers") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 10), 
+        axis.text.y = element_text(size = 10))
 ```
 
 #### 3.1.2 Age
@@ -171,10 +176,10 @@ churn_cleaned %>%
              linetype = "dashed",
              color = "tomato3") +
   annotate(geom = "text",
-         label = "Mean = 28",
+         label = "Mean = 43",
          color = "tomato3",
-         x = 28, 
-         y = 0.017) +
+         x = 35, 
+         y = 0.015) +
   labs(title = "Age Distribution of Customers",
        y = "Density",
        x = "Age")
@@ -188,11 +193,17 @@ summary(churn_cleaned$age)
 
 ```{r Points in wallet Distribution}
 churn_cleaned %>%
+  filter(!is.na(churn_cleaned$points_in_wallet)) %>%
   ggplot() +
   geom_density(aes(x = points_in_wallet)) +
   geom_vline(aes(xintercept = mean(points_in_wallet)),
              linetype = "dashed",
              color = "tomato3") +
+  # annotate(geom = "text",
+  #          label = "Mean = 28.9",
+  #          color = "tomato3",
+  #          x = 40, 
+  #          y = 0.05) +
   labs(title = "Points in wallet distribution of customers",
        subtitle = "<Will fill in something here>",
        y = "Density",
@@ -201,7 +212,7 @@ churn_cleaned %>%
 
 #### 3.1.4 Average time spent
 
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien.
+> Average glucose level = 106.15. Sample is in the normal range. 
 
 ```{r Average time spent Distribution}
 churn_cleaned %>%
@@ -210,9 +221,16 @@ churn_cleaned %>%
   geom_vline(aes(xintercept = mean(avg_time_spent)),
              linetype = "dashed",
              color = "tomato3") +
+  # annotate(geom = "text",
+  #          label = "Mean = 6250",
+  #          color = "tomato3",
+  #          x = 135, 
+  #          y = 0.013) +
   labs(title = "Average time spent by Customers",
        y = "Density",
-       x = "Average time spent")
+       x = "Avg Time (Minutes)") + 
+  theme_bw() #+
+  #theme(axis.text.x = element_text(size = 10))
 
 summary(churn_cleaned$avg_time_spent)
 ```
@@ -230,8 +248,8 @@ summary(churn_cleaned$avg_time_spent)
 
 ```{r Membership Category}
 churn_cleaned %>%
-  mutate(stroke = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
-  ggplot(aes(churn, group = membership_category)) +
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  ggplot(aes(membership_category, group = churn)) +
   geom_bar(aes
            (y = ..prop.., 
              fill = factor(..x..)), 
@@ -246,9 +264,13 @@ churn_cleaned %>%
        x = "Membership Category", 
        y = "Percentage", 
        fill = "membership_category") +
-  facet_wrap(~membership_category) +
-  scale_y_continuous(labels = percent)  +
-  coord_flip()
+  facet_grid(~churn) +
+  scale_y_continuous(labels = percent) +
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn")) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 10), 
+        strip.text.x = element_text(color = "white"),
+        strip.background.x = element_rect(fill = "black"))
 ```
 #### 3.2.2 Average Frequency of login days
 
@@ -257,17 +279,13 @@ churn_cleaned %>%
 ```{r Average Frequency of Login days}
 churn_cleaned %>%
   mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
-  mutate(avg_frequency_login_days_interval=recode(
-    avg_frequency_login_days_interval,
-    "1"="<=10 days",
-    "2"="10-20 days",
-    "3"="20-30 days",
-    "4"=">30 days"
-  )) %>% 
-  ggplot(aes(churn, group = avg_frequency_login_days_interval)) +
+  mutate(avg_frequency_login_days_interval = recode(avg_frequency_login_days_interval,
+                                                    "1" = "1-10", "2" = "11-20", "3" = "21-30", "4" = ">30")
+         ) %>% 
+  ggplot(aes(avg_frequency_login_days_interval, group = churn)) +
   geom_bar(aes
            (y = ..prop.., 
-             fill = factor(..x..)), 
+            fill = factor(..x..)), 
            stat = "count", 
            show.legend = FALSE) +
   geom_label(aes(label = percent(..prop..),
@@ -275,115 +293,130 @@ churn_cleaned %>%
             stat = "count",
             size = 5,
             fill = "white") +
-  labs(title = "Proportion of churn/not churn With average frequency of login days",
-       x = "Avg Frequency of login days", 
+  labs(title = "Proportion of churn/not churn with average frequency of login days",
+       x = "Avg Frequency of Login Days", 
        y = "Percentage", 
        fill = "avg_frequency_login_days_interval") +
-  facet_wrap(~avg_frequency_login_days_interval) +
+  facet_grid(~churn) +
   scale_y_continuous(labels = percent) +
-  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn")) +
-  coord_flip()
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn")) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),
+        strip.text.x = element_text(color = "white"),
+        strip.background.x = element_rect(fill = "black"))
 ```
 
 #### 3.2.3 Average transaction value
-
+> [KL]need to fix. trying to show average transaction value per membership. the $ label and axis is not showing
 > Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. 
 
-```{r Smoke}
+```{r Average Transaction Value}
 churn_cleaned %>%
   mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
-  ggplot(aes(membership_category, group = churn)) +
-  geom_density(aes
-           (avg_transaction_value, color = churn)) +
+  group_by(membership_category, churn) %>% 
+  summarise(avg_transaction_value_by_membership = mean(avg_transaction_value)) %>% 
+  ggplot(aes(x = membership_category, group = churn)) +
+  geom_bar(aes
+           (y = avg_transaction_value_by_membership, 
+             fill = membership_category), 
+           stat = "identity",
+       #    fun.y = "mean",
+           show.legend = FALSE) +
+  geom_text(aes(x= membership_category, y=avg_transaction_value_by_membership, 
+                label= dollar(avg_transaction_value_by_membership)),
+            hjust=-0.8, vjust=-1,
+            size=5, colour="white", fontface="plain"#, angle=360
+            ) + 
    labs(title = "Avg transaction value with Membership category",
        x = "Membership category", 
        y = "Avg Transaction value", 
        fill = "membership_category") +
-  facet_wrap(~membership_category) 
-```
-
-
-#### 3.2.5 points in wallet & Stroke
-
-> Customers who do not churn have higher average points in wallet, but effect size is small. 
-
-```{r Points in wallet effect size}
-churn_cleaned %>% 
-  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
-  ggbetweenstats(
-    x = churn,
-    y = points_in_wallet,
-    plot.type = "box") 
-```
-
-#### 3.2.6 Average transaction value level
-
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien.
-
-```{r Average Transaction value  Size Across membership category}
-churn_cleaned %>%
-  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>% 
-    ggplot(
-    aes(x = churn,
-    y = avg_transaction_value,group = churn,
-    fill = membership_category)) +
-    geom_boxplot() +
-  facet_wrap(~membership_category, ncol = 1) +
+  facet_grid(~churn) +
+  scale_y_continuous(labels = label_dollar()) + 
   coord_flip()
 ```
 
-#### 3.2.7 Age with company & churn
 
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien
+#### 3.2.5 BMI & Stroke
+
+> Patients with stroke have higher average BMI, but effect size is small. 
+
+```{r BMI effect size}
+strokedataset %>% 
+  mutate(stroke = recode(stroke, "1" = "Stroke", "0" = "No Stroke")) %>%
+  ggbetweenstats(
+    x = stroke,
+    y = bmi,
+    plot.type = "box")
+```
+
+#### 3.2.6 Glucose level
+
+> Effect size is small for females but medium for males. Patients with stroke have higher average glucose level. Male stroke patients saw a higher average glucose level than female stroke patients. 
+
+```{r Avg Glucose Level Effect Size Across Gender}
+strokedataset_1 %>%
+  mutate(stroke = recode(stroke, "1" = "Stroke", "0" = "No Stroke")) %>%
+  grouped_ggbetweenstats(
+    x = stroke,
+    y = avg_glucose_level,
+    grouping.var = gender,
+    plot.type = "box")
+```
+
+#### 3.2.7 Age & Stroke
+
+> Effect size is large. Patients who have stroke are mostly older than patients who have no stroke. 
 
 ```{r Age}
-churn_cleaned %>% 
-  mutate(churn = recode(churn, "Yes" = "Churn", "0" = "Not Churn")) %>%
+strokedataset %>% 
+  mutate(stroke = recode(stroke, "1" = "Stroke", "0" = "No Stroke")) %>%
   ggbetweenstats(
-    x = churn,
-    y = age_with_company,
+    x = stroke,
+    y = age,
     plot.type = "box")
 ```
 
 ### 3.3 Correlation Study {.tabset}
 
-> Prep and bake. Since hte classes of variables have already been assigned properly in the cleaning stage, we go with normalizing all numeric predictors and dummyfying all nominal predictors.
+> Prep and bake. Because data is imbalanced, minority group is up sampled. 
 
 ```{r Reciped for EDA}
 library(themis)
 
-reciped_EDA <- recipe(formula = churn ~ .,
-                          data = churn_cleaned) %>%
+reciped_for_EDA <- recipe(formula = stroke ~ .,
+                          data = strokedataset) %>%
+  step_rm(id) %>%
+  themis::step_upsample(stroke) %>%
+  step_impute_knn(bmi) %>% 
   step_normalize(all_numeric_predictors()) %>% 
   step_dummy(all_nominal_predictors())
 
-baked_EDA <- reciped_EDA %>%
+baked_for_EDA <- reciped_for_EDA %>%
   prep(retain = TRUE) %>%
   bake(new_data = NULL)
 ```
 
 
 ```{r}
-baked_EDA %>% count(churn)
+baked_for_EDA %>% count(stroke)
 ```
 
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien.
+> Age, ever_married, avg_glucose_level, heart_disease and hypertension appears to have the highest strength in relationship with stroke (>0.2 corr).
 
 #### 3.3.1 Scatter Plot 
 
 ```{r Scatter PLot}
-baked_EDA %>%
-  select(churn, where(is.numeric)) %>%
+baked_for_EDA %>%
+  select(age, bmi, avg_glucose_level) %>%
   ggpairs()
 ```
 
 #### 3.3.2 Correlation Matrix
 
 ```{r Correlation Matrix}
-baked_EDA %>% 
-  mutate(churn = as.numeric(churn),
-         churn = ifelse(churn == "Yes", 1, 0)
-         ) %>% 
+baked_for_EDA %>% 
   as.matrix(.) %>% 
   rcorr(.) %>% 
   tidy(.) %>% 
@@ -392,76 +425,426 @@ baked_EDA %>%
   rename(variable1 = column1,
          variable2 = column2,
          corr = estimate) %>% 
-  filter(variable1 == "churn" | variable2 == "churn") %>% 
+  filter(variable1 == "stroke" | variable2 == "stroke") %>% 
   datatable()
 ```
 ### {-}
 
 ## 4. Predictive Model
 
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien.
+> Four predictive models were derived. Model A includes all variables, while Model B focuses on variables with effect sizes and correlation (age, ever_married, avg_glucose_level, heart_disease and hypertension). 
 
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien.
+> Model C is derived based on a refinement of both Model A and B based on variable importance, while Model XG seeks to improve on the best model. 
 
-> Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien.
+> Because sample data is highly imbalanced (due to natural rare occurrence of stroke), the sample data was tested using step_upsample, step_downsample and step_rose.
 
 ### 4.1. Split
 
 > Preparation
-> 80% of the samples have been considered for training and 20% of the samples have been considered for testing/validating. 
 
 ```{r}
+set.seed(22070501)
 
-set.seed(100)
-churn_split <- churn_cleaned %>% 
-  initial_split(prop = 0.8, strata = churn)
+stroke_split <- strokedataset %>%  
+  initial_split(prop = 0.80,
+                strata = "stroke")
 ```
 
 > Execution
 
 ```{r}
-churn_train <- churn_split %>% training() 
-churn_test <- churn_split %>% testing()
+stroke_training <- stroke_split %>% training()
+stroke_testing <- stroke_split %>% testing()
 ```
 
-### 4.1. Functions for faster code development 
-workflow_generator <- function(var_recipe, var_model)
-{
-    workflow() %>% 
-    add_recipe({var_recipe}) %>% 
-    add_model({var_model})
-}
+### 4.2. Pre-Process
 
-perf_and_pred_generator <- function(var_workflow, var_tune, var_split)
-{
-  var_parameters <- {var_tune} %>% 
-    select_best(metric = "roc_auc")
-  
-  var_finalized_workflow <- {var_workflow} %>% 
-    finalize_workflow(var_parameters)
-  
-  var_fit <- var_finalized_workflow %>% 
-    last_fit(var_split)
-  
-  var_performance <- var_fit %>% 
-    collect_metrics()
-  
-  var_predictions <- var_fit %>% 
-    collect_predictions()
-  
-  return(list(perf = var_performance, pred = var_predictions))
-  
-}
+> Feature Engineering
 
-CM_builder <- function(data, outcome, title_name)
+```{r}
+## Recipe 1 ----
+reciped_1 <- recipe(stroke ~ . , 
+                    data = stroke_training) %>%
+  step_rm(id) %>%
+  step_impute_knn(bmi) %>%
+  themis::step_upsample(stroke) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+baked_training_1 <- reciped_1 %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+## Recipe 2 ----
+reciped_2 <- recipe(stroke ~ age + avg_glucose_level + heart_disease +
+                    hypertension + ever_married,
+                    data = stroke_training) %>%
+  step_BoxCox(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_rose(stroke) %>%
+  step_interact(terms = ~ avg_glucose_level:starts_with("hypertension")) %>%
+  step_interact(terms = ~ avg_glucose_level:starts_with("heart_disease"))
+
+baked_training_2 <- reciped_2 %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+## Recipe 3 ----
+reciped_3 <- recipe(stroke ~ age + avg_glucose_level + bmi +
+                    heart_disease + hypertension + ever_married + smoking_status,
+                    data = stroke_training) %>%
+  step_impute_knn(bmi) %>%
+  themis::step_downsample(stroke) %>%
+  step_BoxCox(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_interact(terms = ~ bmi:(starts_with("hypertension")
+                + starts_with("smoking_status") + starts_with("heart_disease"))) 
+
+baked_training_3 <- reciped_3 %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+## Recipe 4 ----
+
+# reciped_4 <- recipe(stroke ~ age + avg_glucose_level + heart_disease +
+#                    hypertension + ever_married,
+#                    data = stroke_training) %>%
+#  step_BoxCox(all_numeric_predictors()) %>%
+#  step_normalize(all_numeric_predictors()) %>%
+#  step_dummy(all_nominal_predictors()) %>%
+#  step_rose(stroke) %>%
+#  step_interact(terms = ~ avg_glucose_level:
+#                  (starts_with("heart_disease") + 
+#                     starts_with("hypertension"))) %>%
+#  step_interact(terms = ~ age:
+#                  (starts_with("heart_disease") + 
+#                     starts_with("hypertension")))
+
+#baked_training_4 <- reciped_4 %>%
+#  prep(retain = TRUE) %>%
+#  bake(new_data = NULL)
+```
+
+### 4.3. Fit
+
+```{r}
+library(usemodels)
+
+## RF Model ----
+model_RF <- rand_forest() %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger",
+             importance = "impurity") %>% 
+  set_args(mtry = tune())
+
+## XG Boost Model ----
+XG_BOOST <-  boost_tree(trees = 1000,
+                        mtry = tune(),
+                        min_n = tune(),
+                        learn_rate = tune(),
+                        tree_depth = tune(),
+                        sample_size = tune()
+                        ) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+```
+
+### 4.4. Tune
+
+> Using `workflows::``workflow()`
+
+```{r}
+library(workflows)
+
+## RF Model A
+workflow_RF_A <- workflow() %>% 
+  add_recipe(reciped_1) %>% 
+  add_model(model_RF)
+
+## RF Model B
+workflow_RF_B <- workflow() %>% 
+  add_recipe(reciped_2) %>% 
+  add_model(model_RF)
+
+## RF Model C
+workflow_RF_C <- workflow() %>% 
+  add_recipe(reciped_3) %>% 
+  add_model(model_RF)
+
+## RF Model D
+#workflow_RF_D <- workflow() %>% 
+#  add_recipe(reciped_4) %>% 
+#  add_model(model_RF)
+
+## XG Boost Model
+workflow_XG <- workflow() %>% 
+  add_recipe(reciped_2) %>% 
+  add_model(XG_BOOST)
+
+#workflow_XG_2 <- workflow() %>% 
+#  add_recipe(reciped_4) %>% 
+#  add_model(XG_BOOST)
+```
+
+> Cross-validation (cv)
+
+```{r}
+set.seed(22070502)
+
+### RF Cross Validation
+cv10 <- stroke_training %>% 
+  vfold_cv(v = 10)
+
+cv10rose <- stroke_training %>%
+  vfold_cv(repeats = 5, 
+           strata = stroke) 
+
+grid_RF <- expand.grid(mtry = c(2:5))
+
+### XG Boost Cross Validation
+
+XG_grid <- 
+  grid_max_entropy(
+    mtry(c(5L, 10L)),
+    min_n(c(10L, 40L)),
+    learn_rate(c(-2, -1)),
+    tree_depth(c(5L, 10L)),
+    sample_prop(c(0.5, 1.0)),
+    size = 20)
+```
+
+> Parallel Processing (for Expedited/speedy Modeling)
+
+```{r}
+library(doParallel)
+registerDoParallel()
+
+### RF Tuning
+set.seed(22070503)
+tuned_RF_A <- workflow_RF_A %>% 
+  tune_grid(resamples = cv10,
+            grid = grid_RF,
+            metric = metric_set(accuracy, roc_auc, f_meas))
+
+set.seed(22070504)
+tuned_RF_B <- workflow_RF_B %>% 
+  tune_grid(resamples = cv10rose,
+            grid = grid_RF,
+            metric = metric_set(accuracy, roc_auc, f_meas))
+
+set.seed(22070505)
+tuned_RF_C <- workflow_RF_C %>% 
+  tune_grid(resamples = cv10,
+            grid = grid_RF,
+            metric = metric_set(accuracy, roc_auc, f_meas))
+
+#set.seed(112806)
+#tuned_RF_D <- workflow_RF_D %>% 
+#  tune_grid(resamples = cv10,
+#            grid = grid_RF,
+#            metric = metric_set(accuracy, roc_auc, f_meas))
+
+### XG Boost Tuning
+library(finetune)
+
+set.seed(22070506)
+tuned_XG <- workflow_XG %>% 
+  tune_grid(
+    resamples = cv10,
+    grid = XG_grid,
+    control = control_grid(save_pred = T))
+
+#set.seed(112808)
+#tuned_XG_2 <- workflow_XG_2 %>% 
+#  tune_grid(
+#    resamples = cv10_XG,
+#    grid = XG_grid,
+#    control = control_grid(save_pred = T))
+```
+
+
+```{r Best Model}
+# RF
+tuned_RF_A_results <- tuned_RF_A %>% 
+  collect_metrics()
+
+tuned_RF_B_results <- tuned_RF_B %>% 
+  collect_metrics()
+
+tuned_RF_C_results <- tuned_RF_C %>% 
+  collect_metrics()
+
+#tuned_RF_D_results <- tuned_RF_D %>% 
+#  collect_metrics()
+
+finalized_parameters_RF_A <- tuned_RF_A %>% 
+  select_best(metric = "roc_auc")
+
+finalized_parameters_RF_B <- tuned_RF_B %>% 
+  select_best(metric = "roc_auc")
+
+finalized_parameters_RF_C <- tuned_RF_C %>% 
+  select_best(metric = "roc_auc")
+
+#finalized_parameters_RF_D <- tuned_RF_D %>% 
+#  select_best(metric = "roc_auc")
+
+# XG Boost
+tuned_XG_results <- tuned_XG %>% 
+  collect_metrics()
+
+finalized_parameters_XG <- tuned_XG %>% 
+  select_best("roc_auc")
+
+#tuned_XG_results_2 <- tuned_XG_2 %>% 
+#  collect_metrics()
+
+#finalized_parameters_XG_2 <- tuned_XG_2 %>% 
+#  select_best("roc_auc")
+```
+
+
+```{r}
+### Finalize Workflow ----
+
+# RF
+finalized_workflow_RF_A <- workflow_RF_A %>% 
+  finalize_workflow(finalized_parameters_RF_A)
+
+finalized_workflow_RF_B <- workflow_RF_B %>% 
+  finalize_workflow(finalized_parameters_RF_B)
+
+finalized_workflow_RF_C <- workflow_RF_C %>% 
+  finalize_workflow(finalized_parameters_RF_C)
+
+#finalized_workflow_RF_D <- workflow_RF_D %>% 
+#  finalize_workflow(finalized_parameters_RF_D)
+
+# XG Boost
+finalized_workflow_XG_BOOST <- workflow_XG %>% 
+  finalize_workflow(finalized_parameters_XG)
+
+#finalized_workflow_XG_BOOST_2 <- workflow_XG_2 %>% 
+#  finalize_workflow(finalized_parameters_XG_2)
+```
+
+### 4.5. Assess
+
+```{r}
+### Final Trained Model ----
+
+fit_RF_A <- finalized_workflow_RF_A %>% 
+  last_fit(stroke_split)
+
+fit_RF_B <- finalized_workflow_RF_B %>% 
+  last_fit(stroke_split)
+
+fit_RF_C <- finalized_workflow_RF_C %>% 
+  last_fit(stroke_split)
+
+#fit_RF_D <- finalized_workflow_RF_D %>% 
+#  last_fit(stroke_split)
+
+fit_XG <- finalized_workflow_XG_BOOST %>% 
+  last_fit(stroke_split)
+
+#fit_XG_2 <- finalized_workflow_XG_BOOST_2 %>% 
+#  last_fit(stroke_split)
+```
+
+> Model Performance 
+
+```{r}
+performance_RF_A <- fit_RF_A %>% 
+  collect_metrics()
+
+performance_RF_B <- fit_RF_B %>% 
+  collect_metrics()
+
+performance_RF_C <- fit_RF_C %>% 
+  collect_metrics()
+
+#performance_RF_D <- fit_RF_D %>% 
+#  collect_metrics()
+
+performance_XG <- fit_XG %>% 
+  collect_metrics()
+
+#performance_XG_2 <- fit_XG_2 %>% 
+#  collect_metrics()
+```
+
+> Collect predictions
+
+```{r}
+prediction_RF_A <- fit_RF_A %>% 
+  collect_predictions()
+
+prediction_RF_B <- fit_RF_B %>% 
+  collect_predictions()
+
+prediction_RF_C <- fit_RF_C %>% 
+  collect_predictions()
+
+#prediction_RF_D <- fit_RF_D %>% 
+#  collect_predictions()
+
+prediction_XG <- fit_XG %>% 
+  collect_predictions()
+
+#prediction_XG_2 <- fit_XG_2 %>% 
+#  collect_predictions()
+```
+
+> Comparing Models 
+
+```{r Comparing 4 models}
+performance_RF_A <- performance_RF_A %>% 
+  mutate(algorithm = "Model A (Recipe 1: upsample, all features)")
+
+performance_RF_B <- performance_RF_B %>% 
+  mutate(algorithm = "Model B (Recipe 2, step_rose, best effect + interact glucose)")
+
+performance_RF_C <- performance_RF_C %>% 
+  mutate(algorithm = "Model C (Recipe 3, downsaple, var impr + interact)")
+
+#performance_RF_D <- performance_RF_D %>% 
+#  mutate(algorithm = "Model CD(Recipe 4, step_rose, best effect + interact glucose and age)")
+
+performance_XG <-  performance_XG %>% 
+  mutate(algorithm = "Model XG Boost (Recipe 2, step_rose, best effect + interact glucose)")
+
+#performance_XG_2 <-  performance_XG_2 %>% 
+#  mutate(algorithm = "Model XG Boost 2 (Recipe 4, step_rose, best effect + interact glucose and age)")
+
+bind_rows(performance_RF_A,
+          performance_RF_B,
+          performance_RF_C,
+          #performance_RF_D,
+          performance_XG) %>%
+  select(-.estimator, -.config) %>%
+  pivot_wider(names_from = .metric,
+              values_from = .estimate) %>%
+  datatable() %>%
+  formatRound(columns = c("accuracy", "roc_auc"),
+              digits = 2)
+```
+
+> Confusion Matrix
+
+```{r}
+CM_builder_for_MGMT655 <- 
+  function(data, outcome)
 { 
   {data} %>% 
     conf_mat({outcome}, .pred_class) %>% 
     pluck(1) %>% 
     as_tibble() %>% 
-    mutate(cm_colors = ifelse(Truth == "Yes" & Prediction == "Yes", "True Positive",
-                              ifelse(Truth == "Yes" & Prediction == "No", "False Negative",
-                                     ifelse(Truth == "No" & Prediction == "Yes", 
+    mutate(cm_colors = ifelse(Truth == "1" & Prediction == "1", "True Positive",
+                              ifelse(Truth == "1" & Prediction == "0", "False Negative",
+                                     ifelse(Truth == "0" & Prediction == "1", 
                                             "False Positive", 
                                             "True Negative")
                               )
@@ -479,333 +862,74 @@ CM_builder <- function(data, outcome, title_name)
     ) + 
     theme_fivethirtyeight() + 
     theme(axis.title = element_text()
-    )  + 
-   labs(title = {title_name})
+    ) 
 }
-
-feature_importance_extractor <- function(workflow_data, full_dataset)
-{
-  finalized_model <- {workflow_data} %>% fit({full_dataset})
-  
-  model_summary <- pull_workflow_fit(finalized_model)$fit
-  
-  feature_importance <- data.frame(importance = model_summary$variable.importance) %>% 
-    rownames_to_column("feature") %>% 
-    as_tibble() %>% 
-    mutate(feature = as.factor(feature)) 
-  
-  feature_importance %>% 
-    ggplot(aes(x = importance, y = reorder(feature, importance), fill = importance)) +
-    geom_col(show.legend = F) +
-    scale_fill_gradient(low = "deepskyblue1", high = "deepskyblue4") +
-    scale_x_continuous(expand = c(0, 0)) +
-    labs(
-      y = NULL,
-      title = "Feature (Variable) Importance for Churn Prediction") + 
-    ggthemes::theme_fivethirtyeight()
-}
-
-### 4.2. Pre-Process
-
-> Feature Engineering
+```
 
 ```{r}
-## Recipes ----
-recipe_common <- recipe(churn ~ age + avg_time_spent + points_in_wallet + 
-                          age_with_company + avg_transaction_value +
-                          membership_category + 
-                          avg_frequency_login_days_interval,
-                        data = churn_train)
-
-recipe_norm_dummy <- 
-  recipe_common %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
-
-
-recipe_boxcox <- 
-  recipe_common %>% 
-  step_BoxCox(all_numeric_predictors()) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
-  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
-  step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
-  step_poly(points_in_wallet, degree = 2, role = "predictor")
-
-  
-recipe_up <-   
-  recipe_common %>% 
-  step_upsample(churn) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
-  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
-  step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
-  step_poly(points_in_wallet, degree = 2, role = "predictor")
-
-```
-
-### 4.3. Creating the model objects
-
-```{r}
-## Logistic Regression Model ----
-model_glm <- 
-  logistic_reg(mode = "classification") %>% 
-  set_engine("glm") 
-## RF Model ----
-model_RF <- 
-  rand_forest() %>% 
-  set_args(mtry = tune()) %>% 
-  set_engine("ranger", importance = "impurity") %>% 
-  set_mode("classification")
-
-## XG Boost Model ----
-model_xgb <- 
-  boost_tree(trees = 1000,
-             mtry = tune(),
-             min_n = tune(),
-             tree_depth = tune(),
-             sample_size = tune(),
-             learn_rate = tune()
-  ) %>% 
-  set_engine("xgboost") %>% 
-  set_mode("classification")
-
-##NULL Model
-model_null <- null_model() %>% 
-  set_engine("parsnip") %>% 
-  set_mode("classification")
-```
-
-### 4.4. Creating the workflow objects
-
-> Using `workflows::``workflow()`
-
-```{r}
-workflow_null <- workflow_generator(recipe_norm_dummy,model_null)
-
-## Logistic Regression 
-workflow_glm <- workflow_generator(recipe_norm_dummy, model_glm)
-
-## RF Model with upsampling
-workflow_RF_up <- workflow_generator(recipe_up, model_RF)
-
-## RF Model with BoxCox
-workflow_RF_boxcox <- workflow_generator(recipe_boxcox, model_RF)
-
-
-## XG Boost Model with upsampling
-workflow_xg_up <- workflow_generator(recipe_up, model_xgb)
-
-## XG Boost Model with BoxCox
-workflow_xg_boxcox <- workflow_generator(recipe_boxcox, model_xgb)
-```
-### 4.5. Creating the cross validation sets and tuning parameters
-> Cross-validation (cv)
-
-```{r}
-###Cross Validation
-set.seed(100)
-CV_10 <- churn_train %>% 
-  vfold_cv(v = 10, strata = churn)
-
-###Tuning Parameters
-grid_RF <- expand.grid(mtry = c(3,4,5))
-
-grid_XG <-
-  grid_max_entropy(
-    mtry(c(5L, 10L),
-    ),
-    min_n(c(10L, 40L)
-    ),
-    tree_depth(c(5L, 10L)
-    ),
-    sample_prop(c(0.5, 1.0)
-    ),
-    learn_rate(c(-2, -1)
-    ),
-    size = 20
-  )
-```
-
-### 4.6. Tuning
-> Parallel Processing (for Expedited/speedy Modeling)
-
-```{r}
-registerDoParallel()
-### NULL
-set.seed(100)
-fit_null <- 
-  workflow_null %>% 
-  fit_resamples(CV_10,
-                control = control_resamples(save_pred = T))
-
-### Logistic Regressioin
-set.seed(100)
-tuned_glm <- 
-  workflow_glm %>% 
-  tune::tune_grid(resamples = CV_10,
-                  metrics = metric_set(accuracy, roc_auc, f_meas)
-  )
-set.seed(100)
-### Random Forrest with upsampling
-tuned_RF_up <- workflow_RF_up %>% 
-  tune::tune_grid(resamples = CV_10,
-                  grid = grid_RF,
-                  metrics = metric_set(accuracy, roc_auc, f_meas))
-set.seed(100)
-#### Random Forrest with BoxCox
-tuned_RF_boxcox <- workflow_RF_boxcox %>% 
-  tune::tune_grid(resamples = CV_10,
-                  grid = grid_RF,
-                  metrics = metric_set(accuracy, roc_auc, f_meas))
-set.seed(100)
-### XGBoost with upsampling
-tuned_xg_up <- 
-  workflow_xg_up %>% 
-  tune_grid(resamples = CV_10,
-            grid = grid_XG,
-            control = control_grid(save_pred = T),
-            metrics = metric_set(accuracy, roc_auc, f_meas)
-  )
-
-set.seed(100)
-### XGBoost with BoxCox
-tuned_xg_boxcox <- 
-  workflow_xg_boxcox %>% 
-  tune_grid(resamples = CV_10,
-            grid = grid_XG,
-            control = control_grid(save_pred = T),
-            metrics = metric_set(accuracy, roc_auc, f_meas)
-  )
-```
-
-### 4.7. Selecting best model and collecting predictions
-```{r Best Model}
-### NULL
-performance_null <- fit_null %>% collect_metrics()
-predictions_null <- fit_null %>% collect_predictions()
-
-
-# Logisic Regression
-perf_and_pred <- perf_and_pred_generator(workflow_glm, tuned_glm, churn_split)
-performance_glm <- perf_and_pred$perf
-predictions_glm <- perf_and_pred$pred
-
-# Random Forrest with Upsampling 
-perf_and_pred <- perf_and_pred_generator(workflow_RF_up, tuned_RF_up, churn_split)
-performance_RF_up <- perf_and_pred$perf
-predictions_RF_up <- perf_and_pred$pred
-
-# Random Forrest with BoxCox
-perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, churn_split)
-performance_RF_boxcox <- perf_and_pred$perf
-predictions_RF_boxcox <- perf_and_pred$pred
-
-# XGBoost with Upsampling
-perf_and_pred <- perf_and_pred_generator(workflow_xg_up, tuned_xg_up, churn_split)
-performance_xg_up <- perf_and_pred$perf
-predictions_xg_up <- perf_and_pred$pred
-
-# XGBoost with BoxCox
-perf_and_pred <- perf_and_pred_generator(workflow_xg_boxcox, tuned_xg_boxcox, churn_split)
-performance_xg_boxcox <- perf_and_pred$perf
-predictions_xg_boxcox <- perf_and_pred$pred
-```
-
-
-> Comparing Models 
-
-```{r Comparing 4 models}
-predictions_null <- predictions_null %>% 
-  mutate(model = "Null model")
-predictions_glm <- predictions_glm %>% 
-  mutate(model = "Logistic Regression")
-predictions_RF_up <- predictions_RF_up %>% 
-  mutate(model = "Random Forrest with Upsampling")
-predictions_RF_boxcox <- predictions_RF_boxcox %>% 
-  mutate(model = "Random Forrest with BoxCox")
-predictions_xg_up <- predictions_xg_up %>% 
-  mutate(model = "XGBoost with Upsampling")
-predictions_xg_boxcox <- predictions_xg_boxcox %>% 
-  mutate(model = "XGBoost with BoxCox")
-
-performance_glm <- performance_glm %>% 
-  mutate(model = "Logistic Regression")
-performance_RF_up <- performance_RF_up %>% 
-  mutate(model = "Random Forrest with Upsampling")
-performance_RF_boxcox <- performance_RF_boxcox %>% 
-  mutate(model = "Random Forrest with BoxCox")
-performance_xg_up <- performance_xg_up %>% 
-  mutate(model = "XGBoost with Upsampling")
-performance_xg_boxcox <- performance_xg_boxcox %>% 
-  mutate(model = "XGBoost with BoxCox")
-
-
-comparing_models <- bind_rows(performance_glm,
-          performance_RF_up,
-          performance_RF_boxcox,
-          performance_xg_up,
-          performance_xg_boxcox) %>%
-  select(-.estimator, -.config) %>%
-  pivot_wider(names_from = .metric,
-              values_from = .estimate) %>%
-  datatable() %>%
-  formatRound(columns = c("accuracy", "roc_auc"),
-              digits = 2)
-```
-
-> Confusion Matrix
-
-```{r}
-CM_null <- CM_builder(predictions_null, "churn", predictions_null$model[1])
-CM_glm <- CM_builder(predictions_glm, "churn", predictions_glm$model[1])
-CM_RF_Up <- CM_builder(predictions_RF_up, "churn", predictions_RF_up$model[1])
-CM_RF_boxcox <- CM_builder(predictions_RF_boxcox,"churn", predictions_RF_boxcox$model[1])
-CM_xg_Up <- CM_builder(predictions_xg_up, "churn", predictions_xg_up$model[1])
-CM_xg_boxcox <- CM_builder(predictions_xg_boxcox,"churn", predictions_xg_boxcox$model[1])
-grid.arrange(CM_null, CM_glm,CM_RF_Up,CM_RF_boxcox,CM_xg_Up,CM_xg_boxcox)
+CM_builder_for_MGMT655(prediction_XG, "stroke")
 ```
 
 > Null Model
 
 ```{r}
-model_null <- null_model() %>% 
+model_baseline <- null_model() %>% 
   set_engine("parsnip") %>% 
   set_mode("classification")
 
-workflow_null <- workflow_generator(recipe_norm_dummy,model_null)
-
-fit_null <- 
-  workflow_null %>% 
-  fit_resamples(CV_10,
+workflow_baseline <- workflow() %>% 
+  add_recipe(reciped_1) %>% 
+  add_model(model_baseline) %>% 
+  fit_resamples(cv10,
                 control = control_resamples(save_pred = T))
 
-
-performance_null <- fit_null %>% collect_metrics()
-predictions_null <- fit_null %>% collect_predictions()
+performance_baseline <- workflow_baseline %>% collect_metrics()
+prediction_baseline <- workflow_baseline %>% collect_predictions()
 ```
 
 > Comparing Model Performances
 
 ```{r}
-comparing_predictions <- bind_rows(predictions_glm,
-          predictions_RF_up,
-          predictions_RF_boxcox,
-          predictions_xg_up,
-          predictions_xg_boxcox)
+
+prediction_RF_A <- prediction_RF_A %>% 
+  mutate(algorithm = "Random Forest (Recipe 1, upsample, all features)")
+
+prediction_RF_B <- prediction_RF_B %>% 
+  mutate(algorithm = "Random Forest (Recipe 2, step_rose, best effect + interact)")
+
+prediction_RF_C <- prediction_RF_C %>% 
+  mutate(algorithm = "Random Forest (Recipe 3, downsample, var impt + interact)")
+
+#prediction_RF_D <- prediction_RF_D %>% 
+#  mutate(algorithm = "Random Forest (Recipe 4, step_rose, best effect + interact glucose and age)")
+
+prediction_XG <-  prediction_XG %>% 
+  mutate(algorithm = "XG Boost (Recipe 2, step_rose, best effect + interact)")
+
+#prediction_XG_2 <-  prediction_XG_2 %>% 
+#  mutate(algorithm = "XG Boost 2 (Recipe 4, step_rose, best effect + interact glucose and age)")
+
+prediction_baseline <- prediction_baseline %>%
+  mutate(algorithm = "Baseline model")
+
+comparing_predictions <- bind_rows(prediction_RF_A,
+                                   prediction_RF_B,
+                                   prediction_RF_C,
+                                   prediction_XG,
+                                   prediction_baseline)
 ```
 
 > ROC-AUC Curve
 
 ```{r}
 comparing_predictions %>% 
-  group_by(model) %>% 
-  roc_curve(truth = churn,
-            .pred_Yes) %>% 
+  group_by(algorithm) %>% 
+  roc_curve(truth = stroke,
+            .pred_1) %>% 
   autoplot() +
   ggthemes::scale_color_wsj() +
   labs(title = "Comparisons of Predictive Power\nbetween models for Stroke",
-       subtitle = "Random Forrest and XGBoost similar result but XGBoost with upsampling provides better recall",
+       subtitle = "XG Boost Performs Better in Prediction",
        color = "Prediction Tools") +
   theme(legend.position = c(.65, .15))
 ```
@@ -813,31 +937,32 @@ comparing_predictions %>%
 > Feature Importance
 
 ```{r}
-finalized_parameters <- tuned_xg_up %>% select_best(metric = "roc_auc")
-finalized_workflow <- workflow_xg_up %>%finalize_workflow(finalized_parameters)
-finalized_model <- finalized_workflow %>% fit(churn_cleaned)
+library(vip)
+
+# XG Boost 
+
+finalized_model <- finalized_workflow_XG_BOOST %>% 
+  fit(data = strokedataset)
 
 finalized_model %>% 
-  extract_fit_parsnip() %>% # pull_workflow_fit()
-  vip(aesthetic = list(fill = "deepskyblue4",
-                       alpha = 0.50)
-      ) +
+  pull_workflow_fit() %>% 
+  vip() +
   labs(
     y = NULL,
-    title = "Feature (Variable) Importance for Predicting Churn",
-    subtitle = "Points in wallet has the highest importance")
+    title = "Feature (Variable) Importance for Predicting Stroke",
+    subtitle = "Age has the highest importance")
 ```
 
 > Deploy Machine Learning Algorithm to Dashboard
 
 ```{r}
-finalized_model %>% saveRDS("finalized_churn_prediction_model.rds")
+finalized_model %>% saveRDS("finalized_stroke_model.rds")
 ```
 
 > Save R Data 
 
 ```{r}
-save.image("GroupProject.RData")
+save.image("Rmarkdown.RData")
 ```
 
 ## 5. Executive Summary
