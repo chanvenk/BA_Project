@@ -1,8 +1,8 @@
 ---
 title: "MGMT655 Group Project Submission"
 subtitle: "Data Science Project for MGMT 655 Business Analytics for Decision Making"
-author: "Na HUANG, Emmanuel RICHARD, Chandrasekar Venkataraman, Do Hoang Yen LE"
-date: "16 July 2022"
+author: "Na HUANG, Emmanuel RICHARD, Chandrasekar VENKATARAMAN, Do Hoang Yen LE"
+date: "26 July 2022"
 output:
   html_document:
     prettydoc::html_pretty:
@@ -15,7 +15,7 @@ output:
     toc_float: 
       collapsed: false
       smooth_scroll: true
-    number_sections: true
+    number_sections: false
 ---
 
 ```{r setup, include=F}
@@ -44,7 +44,7 @@ code { color: rgb(205,79,57) }
 .tocify-extend-page {height: 0 !important; }
 ```
 
-## 1. Business Question
+## 1.Business Question
 
 > Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi interdum dui non nisl molestie, ac tempus neque suscipit. Curabitur et elementum sapien. Duis id justo at nibh feugiat eleifend. Mauris non dui imperdiet, placerat nulla non, finibus velit. Praesent diam orci, fringilla quis nulla eu, commodo congue ipsum. Donec erat felis, venenatis eu nisi eu, dictum egestas erat. Sed quis tempus lectus. Vestibulum lobortis tellus et ullamcorper lacinia. Fusce faucibus porttitor enim, ultrices egestas eros mattis ac. Suspendisse at maximus sapien. Aenean faucibus augue ut congue ornare. Quisque tristique ex eget eros fermentum condimentum. Vivamus ut mi leo. Aenean imperdiet, felis sed ultricies porttitor, lectus sem congue diam, ut malesuada sem turpis sed arcu. Proin tincidunt ultricies est id sollicitudin. Suspendisse potenti.
 
@@ -64,8 +64,7 @@ pacman::p_load(tidyverse, lubridate, tidymodels, skimr,
                DT, doParallel, parsnip, themis, ranger,
                ggpubr, vip, ggthemes, ggthemr
 )
-source("Functions.R")
-#source("GroupProjectRmarkdown.Rdata")
+#source("Functions.R")
 ```
 
 > Data was sourced from [Kaggle](https://www.kaggle.com/datasets/imsparsh/churn-risk-rate-hackerearth-ml)
@@ -109,6 +108,7 @@ churn_cleaned <- churn_df %>%
                          ifelse(as.numeric(avg_frequency_login_days) > 20 & as.numeric(avg_frequency_login_days) <= 30, 3,
                                 ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
                          )))) %>%
+  mutate(membership_category = ifelse(membership_category == "Premium "))
   select(-medium_of_operation,
          -referral_id, -customer_id, -security_no, -Name) %>%
   mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>%
@@ -124,7 +124,7 @@ churn_cleaned <- churn_df %>%
 churn_cleaned <- churn_cleaned %>% 
   select(churn, points_in_wallet, membership_category, avg_transaction_value,
          avg_time_spent, age_with_company, age, avg_frequency_login_days_interval)
-
+churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),1000),]
 ```
 
 
@@ -216,7 +216,7 @@ churn_cleaned %>%
 
 summary(churn_cleaned$avg_time_spent)
 ```
-### {-}
+
 
 ### 3.2 Multi-variate Analysis {.tabset}
 
@@ -355,7 +355,7 @@ library(themis)
 reciped_EDA <- recipe(formula = churn ~ .,
                           data = churn_cleaned) %>%
   step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors())
+  step_dummy(churn, all_nominal_predictors())
 
 baked_EDA <- reciped_EDA %>%
   prep(retain = TRUE) %>%
@@ -373,7 +373,7 @@ baked_EDA %>% count(churn)
 
 ```{r Scatter PLot}
 baked_EDA %>%
-  select(churn, where(is.numeric)) %>%
+  select(churn, points_in_wallet, age, avg_time_spent) %>%
   ggpairs()
 ```
 
@@ -384,6 +384,7 @@ baked_EDA %>%
   mutate(churn = as.numeric(churn),
          churn = ifelse(churn == "Yes", 1, 0)
          ) %>% 
+  select(churn, where(is.numeric)) %>% 
   as.matrix(.) %>% 
   rcorr(.) %>% 
   tidy(.) %>% 
@@ -395,7 +396,6 @@ baked_EDA %>%
   filter(variable1 == "churn" | variable2 == "churn") %>% 
   datatable()
 ```
-### {-}
 
 ## 4. Predictive Model
 
@@ -424,6 +424,7 @@ churn_train <- churn_split %>% training()
 churn_test <- churn_split %>% testing()
 ```
 
+```{r}
 ### 4.1. Functions for faster code development 
 workflow_generator <- function(var_recipe, var_model)
 {
@@ -504,7 +505,7 @@ feature_importance_extractor <- function(workflow_data, full_dataset)
       title = "Feature (Variable) Importance for Churn Prediction") + 
     ggthemes::theme_fivethirtyeight()
 }
-
+```
 ### 4.2. Pre-Process
 
 > Feature Engineering

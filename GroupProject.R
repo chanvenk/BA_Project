@@ -43,9 +43,7 @@ churn_cleaned <- churn_df %>%
   mutate(churn1 = fct_relevel(churn, "Yes"))
 churn_cleaned <- churn_cleaned %>% 
   select(churn, points_in_wallet, membership_category, avg_transaction_value,
-         avg_time_spent, age_with_company, age, avg_frequency_login_days_interval, 
-         preferred_offer_types, internet_option, days_since_last_login, 
-         used_special_discount, past_complaint, feedback, complaint_status)
+         avg_time_spent, age_with_company, age, avg_frequency_login_days_interval)
 
 # EDA using ggapirs ----
 library(GGally)
@@ -813,3 +811,102 @@ shinyApp(ui, server)
 #  avg_frequency_login_days + internet_option + 
 #  offer_application_preference + feedback + past_complaint +
 #  complaint_status + preferred_offer_types + joined_through_referral#
+
+# Clustering ----
+churn_clustering <- churn_cleaned %>% 
+  select(churn, gender, membership_category, avg_frequency_login_days_interval)
+
+churn_clustering <- churn_clustering[sample(nrow(churn_cleaned),1000),]
+reciped_EDA <- recipe(formula = churn ~ .,
+                      data = churn_clustering) %>%
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(churn, all_nominal_predictors())
+
+baked_EDA <- reciped_EDA %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+
+
+baked_EDA <- baked_EDA %>% select(-starts_with("churn"))
+fviz_nbclust(baked_EDA,
+             kmeans,
+             method = "wss")
+
+# A novel approach to specify the number of clusters 
+
+# Gap statistic ####
+
+install.packages("cluster")
+library(cluster)
+
+gap_statistic <- 
+  clusGap(baked_EDA,
+          FUN = kmeans,
+          nstart = 50,
+          K.max = 10,
+          B = 1000)
+
+bfactoextra::fviz_gap_stat(gap_statistic)
+
+# Visualization for Reporting ----
+
+cluster3 <- 
+  baked_EDA %>% 
+  kmeans(3, nstart = 30)
+
+# You might want to provide lables for each observation.
+
+fviz_cluster(cluster3,
+             data = baked_EDA,
+             geom = "text",
+             repel = T) + 
+  theme_bw()
+
+# Interpretable ML: Tidy ML advanced ----
+
+devtools::install_github("EmilHvitfeldt/tidyclust")
+library(tidyclust)
+
+Model_kMeans <- 
+  k_means(k = 3) %>% 
+  set_engine_tidyclust("stats")
+
+Model_kMeans
+
+kMeans_Algorithm <- 
+  Model_kMeans %>% 
+  fit(formula =  ~., 
+      data = as.data.frame(baked_EDA)
+  )
+
+kMeans_Algorithm %>% 
+  extract_cluster_assignment() %>% 
+  print(n = nrow(.)
+  )
+
+# Persona Analysis ----
+
+# customer_id
+# item1: Shopping is fun                              
+# item2: Shopping is bad for your budget               
+# item3: I combine shopping with eating out            
+# item4: I try to get the best buys while shopping     
+# item5: I don't care about shopping                   
+# item6: You can save lot of money by comparing prices 
+# income: The household income of the respondent      
+# visits: How often they visit the mall   
+
+
+for_persona_analysis <-
+  extract_centroids(kMeans_Algorithm) 
+
+persona <- 
+  for_persona_analysis %>% 
+  ggradar(grid.min = -1.5,
+          grid.max = 1.3,
+          legend.position = "top")
+
+
+persona
+# Thank you for working with the R script :)
+
