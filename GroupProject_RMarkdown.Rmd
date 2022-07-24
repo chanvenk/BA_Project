@@ -1,0 +1,1005 @@
+---
+title: "MGMT655 Group Project Submission"
+subtitle: "Data Science Project for MGMT 655 Business Analytics for Decision Making"
+author: "Na HUANG, Emmanuel RICHARD, Chandrasekar VENKATARAMAN, Do Hoang Yen LE"
+date: "26 July 2022"
+output:
+  html_document:
+    prettydoc::html_pretty:
+      theme: Cayman
+    highlight: breezedark
+    # css: styles.css
+    # latex_engine: xelatex
+    # mainfont: Calibri Light
+    toc: yes
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+    number_sections: false
+---
+
+```{r setup, include=F}
+# Global Setting
+knitr::opts_chunk$set(echo = T, 
+                      warning = F, 
+                      message = F,
+                      cache = T,
+                      dpi = 600, 
+                      fig.width = 10, 
+                      fig.height = 6, 
+                      fig.align = "center")
+```
+
+```{css, echo = F}
+h1 { color: rgb(62, 6, 148); }
+h2 { color: rgb(0, 104, 139); } 
+h3 { color: rgb(51, 122, 183); }
+
+body {font-family:  -apple-system, BlinkMacSystemFont, 
+                    "Segoe UI", Roboto, Ubuntu;
+      font-size: 12pt; }
+
+code { color: rgb(205,79,57) }
+
+.tocify-extend-page {height: 0 !important; }
+```
+
+## 1. Business Question
+
+> Customer churn is the rate at which customers choose to stop purchasing a specific company's product or paying for its service. Churn plays an important role in influencing company's revenue and profitability. Thus, it is important to understand reasons why customers choose to leave and come up with strategies to retain them.
+
+> Our models and analysis can help the business make more accurate volume forecasts and identify the most vulnerable customers to retain in order to reduce overall customer churn rate.
+
+> Out of 24 available variables, we selected 8 most relevant ones and built 4 models to predict whether a customer is likely to churn or not, based on the 3 categories of information below:
+
+* User demographic information
+* Browsing behavior
+* Historical purchase data among other information
+
+> Afterwards, we compared different models' performances in prediction to select the best-performing one and extracted its most important features. 
+
+## 2. Import
+
+> Load packages
+
+```{r Load Package}
+pacman::p_load(tidyverse, lubridate, tidymodels, skimr, 
+               GGally, ggstatsplot, Hmisc, broom, plotly, 
+               DT, doParallel, parsnip, themis, ranger,
+               ggpubr, vip, ggthemes, ggthemr
+)
+```
+
+> Data was sourced from [Kaggle](https://www.kaggle.com/datasets/imsparsh/churn-risk-rate-hackerearth-ml)
+
+> The 8 most relevant features of the model are described below : 
+
+| Variable (Feature) Name           | Description                                                                                                              |
+|:--------------------|:--------------------------------------------------|
+| `churn`                           | `Yes` if the customer churned or `No` if the customer did not churn                                                                         |
+| points_in_wallet                  | Points in wallet of the customer                                                                                         |
+| membership_category               | "No Membership", "Basic Membership", "Premium Membership", "Silver Membership", "Gold Membership", "Platinum Membership" |
+| avg_transaction_value             | Average transaction value($) of the customer                                                                                |
+| avg_time_spent                    | Average time spent (seconds) on the website by the customer                                                                        |
+| days_since_joining                  | Days since the customer signed up                                                                              |
+| age                               | Age (years) of the customer                                                                                                      |
+| avg_frequency_login_days_interval | Average frequency the customer logs in ("0-10","10-20","20-30","\>30" days)         |
+| gender                             | M for Male and F for Female
+
+```{r Import Data}
+churn_df <- read_csv("churn_dataset_train.csv")
+```
+
+```{r Data table}
+churn_df %>% 
+  datatable(options = list(scrollX = T))
+```
+
+## 3. Transform & EDA
+
+> To clean the data, we eliminated rows where time-related features had negative values, those with erroneous inputs, like "Error", "Unknown", or "?", and missing values. We created 3 new features from existing ones:
+* days_since_joining: numeric feature for number of days since the customer joined the platform
+* avg_frequency_login_days_interval: a factor feature with 4 categories
+* Churn: binary variable of "Yes" if the churn risk score is 5 or above, otherwise "No"
+Lastly, we removed medium of operation, referral_id, customer_id, security_no and Name since they are not relevant in addressing the question.
+
+
+```{r skimming the dataset}
+skim(churn_df) 
+```
+
+```{r Transform Data}
+churn_cleaned <- churn_df %>%
+  filter(days_since_last_login > 0 & avg_time_spent > 0 & avg_frequency_login_days > 0
+         & avg_frequency_login_days != "Error" & gender != "Unknown"
+         & joined_through_referral != "?" & churn_risk_score > 0) %>%
+  drop_na() %>%
+  mutate(days_since_joining = difftime(Sys.Date(),joining_date, units = "days")) %>%
+  mutate(avg_frequency_login_days_interval =
+           ifelse(as.numeric(avg_frequency_login_days) > 0 & as.numeric(avg_frequency_login_days) <= 10, 1,
+                  ifelse(as.numeric(avg_frequency_login_days) > 10 & as.numeric(avg_frequency_login_days) <= 20, 2,
+                         ifelse(as.numeric(avg_frequency_login_days) > 20 & as.numeric(avg_frequency_login_days) <= 30, 3,
+                                ifelse(as.numeric(avg_frequency_login_days) > 30, 4, 0)
+                         )))) %>%
+  select(-medium_of_operation,
+         -referral_id, -customer_id, -security_no, -Name, -avg_frequency_login_days) %>%
+  mutate(churn = ifelse(churn_risk_score >=5, "Yes", "No")) %>%
+  select(-churn_risk_score, -last_visit_time, -joining_date) %>% 
+  complete() %>%
+  dplyr::mutate_all(as.factor) %>%
+  dplyr::mutate(across(c(
+    age, avg_time_spent, points_in_wallet,
+    days_since_joining, avg_transaction_value, days_since_last_login
+  ),as.numeric)) %>%
+  mutate(churn = fct_relevel(churn, "Yes"))
+
+churn_cleaned <- churn_cleaned
+levels(churn_cleaned$membership_category) <- c("No Membership","Basic Membership","Premium Membership","Silver Membership","Gold Membership","Platinum Membership")
+
+#churn_cleaned_selected <- churn_cleaned %>% 
+#  select(churn, points_in_wallet, membership_category, avg_transaction_value,
+#         avg_time_spent, days_since_joining, age, avg_frequency_login_days_interval,gender)
+#churn_cleaned <- churn_cleaned[sample(nrow(churn_cleaned),1000),]
+```
+
+```{r Check Transform Data}
+skim(churn_cleaned)
+```
+
+### 3.1 Uni-variate Analysis {.tabset}
+
+>First, we used key demographic characteristics to describe the basics of the training dataset.
+
+#### 3.1.1 Churn
+
+> 27% customers in the dataset have churned.
+This is the threshold for future marketing campaigns' effectiveness: any idea that can lower this rate should be considered effective.
+
+```{r Churn Count}
+ggthemr("fresh")
+
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
+  ggplot(aes(churn)) +
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  scale_y_continuous(labels = percent) +
+  geom_label(aes(label = percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..)), 
+            stat = "count",
+            size = 5,
+            fill = "white") +
+  labs(title = "Proportion of Churned Customers",
+       x = "Churn",
+       y = "Proportion of Customers")
+```
+
+#### 3.1.2 Age
+
+> The data covers a well distributed range of customer ages, more than half of them are between 14 and 41 years old. Average customer age is 28 years-old.
+
+```{r Age Distribution}
+churn_cleaned %>%
+  ggplot() +
+  geom_density(aes(x = age)) +
+  geom_vline(aes(xintercept = mean(age)),
+             linetype = "dashed",
+             color = "tomato3") +
+  annotate(geom = "text",
+         label = "Mean = 28",
+         color = "tomato3",
+         x = 28, 
+         y = 0.017) +
+  labs(title = "Age Distribution of Customers",
+       y = "Density",
+       x = "Age")
+
+summary(churn_cleaned$age)
+```
+
+#### 3.1.3 Points in wallet
+
+> As points in wallet are determined by previous spending volume and following redemption, they indicate how frequent customers purchase from the website and their loyalty in the long term. 
+
+```{r Points in wallet Distribution}
+churn_cleaned %>%
+  ggplot() +
+  geom_density(aes(x = points_in_wallet)) +
+  geom_vline(aes(xintercept = mean(points_in_wallet)),
+             linetype = "dashed",
+             color = "tomato3") +
+  labs(title = "Points in wallet distribution of customers",
+       y = "Density",
+       x = "Points in wallet")
+```
+
+#### 3.1.4 Average time spent
+
+> Average time spent on the website reflects customer stickiness. Our customers spend an average of 6250 seconds(1.74 hours). A significant proportion of customers spend less than 5,000 seconds on average on the platform. After around 10,000 seconds, we notice a flattening and a subsequent decrease in the average time spent by each customer. 
+
+```{r Average time spent Distribution}
+churn_cleaned %>%
+  ggplot() +
+  geom_density(aes(x = avg_time_spent)) +
+  geom_vline(aes(xintercept = mean(avg_time_spent)),
+             linetype = "dashed",
+             color = "tomato3") +
+  labs(title = "Average time spent by Customers",
+       y = "Density",
+       x = "Average time spent")
+
+summary(churn_cleaned$avg_time_spent)
+```
+
+
+
+### 3.2 Multi-variate Analysis {.tabset}
+
+> All quantitative variables are validated to determine key factors in customer churn. As churn risk was categorical in the original dataset, we re-classified only customers with churn score >= 5 as "Yes"(will churn).
+
+#### 3.2.1 Membership category and churn
+
+> Comparing across different memberships, there is a higher churn rate of customers without a membership (61%) or with the Basic version (73%). Churn rates among Premium, Silver, Gold and Platinum are 0%.
+
+```{r Membership Category}
+churn_cleaned %>%
+  mutate(stroke = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  ggplot(aes(churn, group = membership_category)) +
+  geom_bar(aes
+           (y = ..prop.., 
+             fill = factor(..x..)), 
+           stat = "count", 
+           show.legend = FALSE) +
+  geom_label(aes(label = percent(..prop..),
+                y = ..prop..), 
+            stat = "count",
+            size = 5,
+            fill = "white") +
+  labs(title = "Proportion of churn/not churn With Membership Category",
+       x = "Membership Category", 
+       y = "Percentage", 
+       fill = "membership_category") +
+  facet_wrap(~membership_category) +
+  scale_y_continuous(labels = percent)  +
+  coord_flip()
+```
+
+#### 3.2.2 Average Frequency of login days with churn
+
+> Users who login every 20-30 days are least likely to stay (32.1%), followed by >30 days (29.8%), 10-20 days(26.6%) and no more than 10 days(23.0%). This shows that the more frequently they use the website and app, the more likely they are to churn. We can investigate further by going through customer feedback, but this is out of our project's scope.
+
+```{r Average Frequency of Login days}
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not churn")) %>%
+  mutate(avg_frequency_login_days_interval=recode(
+    avg_frequency_login_days_interval,
+    "1"="<=10 days",
+    "2"="10-20 days",
+    "3"="20-30 days",
+    "4"=">30 days"
+  )) %>% 
+  ggplot(aes(churn, group = avg_frequency_login_days_interval)) +
+  geom_bar(aes
+           (y = ..prop.., 
+             fill = factor(..x..)), 
+           stat = "count", 
+           show.legend = FALSE) +
+  geom_label(aes(label = percent(..prop..),
+                y = ..prop..), 
+            stat = "count",
+            size = 5,
+            fill = "white") +
+  labs(title = "Proportion of churn/not churn With average frequency of login days",
+       x = "Avg Frequency of login days", 
+       y = "Percentage", 
+       fill = "avg_frequency_login_days_interval") +
+  facet_wrap(~avg_frequency_login_days_interval) +
+  scale_y_continuous(labels = percent) +
+  scale_x_discrete(labels = c("Yes" = "Churn", "No" = "Not Churn")) +
+  coord_flip()
+```
+
+
+#### 3.2.3 Points in wallet & Churn 
+> Customers who do not churn have higher average points in wallet though the difference is not extreme. For both churn and non-churn, there are anomalies of customers with very high number of points in wallet and those with very low number of points in wallet respectively.
+
+```{r Points in wallet effect size}
+churn_cleaned %>% 
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>%
+  ggbetweenstats(
+    x = churn,
+    y = points_in_wallet,
+    plot.type = "box") 
+```
+
+#### 3.2.4 Points in Wallet with Membership Category
+
+> Amongst the membership categories that have churned customers, we observe that customers who do not churn have higher points in wallet than the customers who churn. 
+
+```{r Points in wallet across membership category}
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>% 
+    ggplot(
+    aes(x = churn,
+    y = points_in_wallet,group = churn,
+    fill = membership_category)) +
+    geom_boxplot() +
+  facet_wrap(~membership_category, ncol = 1) +
+  coord_flip()
+```
+
+=#### 3.2.5 Average transaction value with membership category
+
+> On comparing the level of spend between membership categories, we observe that there is no churn within premium or higher membership categories. Among customers with no membership or basic version, the higher the spend level, the more likely they will churn. This may be an aspect to consider for retention.
+
+```{r Average Transaction value Across membership category}
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>% 
+    ggplot(
+    aes(x = churn,
+    y = avg_transaction_value,group = churn,
+    fill = churn)) +
+    geom_boxplot() +
+  facet_wrap(~membership_category, ncol = 1) +
+  coord_flip()
+```
+
+#### 3.2.5 Days since joining & churn
+
+> Number of days since joining or how long the customer has been with the company does not have an effect on churn. 
+
+```{r Age with company}
+churn_cleaned %>% 
+  mutate(churn = recode(churn, "Yes" = "Churn", "0" = "Not Churn")) %>%
+  ggbetweenstats(
+    x = churn,
+    y = days_since_joining,
+    plot.type = "box")
+```
+
+#### 3.2.6 Points in Wallet with gender 
+> Gender does not have a significant impact on the interaction between points in wallet and churn. 
+
+```{r Points in wallet across gender}
+churn_cleaned %>%
+  mutate(churn = recode(churn, "Yes" = "Churn", "No" = "Not Churn")) %>% 
+    ggplot(
+    aes(x = churn,
+    y = points_in_wallet,group = churn,
+    fill = churn)) +
+    geom_boxplot() +
+  facet_wrap(~gender, ncol = 1) +
+  coord_flip()
+```
+
+### 3.3 Correlation Study {.tabset}
+
+> Since the classes of variables have already been assigned in the cleaning stage, we proceed with normalizing all numeric predictors and dummyfying all nominal predictors.
+
+```{r Reciped for EDA}
+reciped_EDA <- recipe(formula = churn ~ .,
+                          data = churn_cleaned) %>%
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+baked_EDA <- reciped_EDA %>%
+  prep(retain = TRUE) %>%
+  bake(new_data = NULL)
+```
+
+```{r checking the baked data}
+baked_EDA %>% count(churn)
+```
+
+> As we can see, the dataset is imbalanced towards non-churn customers and as such we would need to use appropriate transformation techniques to account for the imbalance. 
+
+#### 3.3.1 EDA using ggpairs
+> A few highlights from ggpairs plot: 
+
+* Points in wallet have a high impact on churn.
+* Average time spent is slightly right-skewed. 
+* Average transaction value has a noticeable effect on churn. 
+
+```{r GGPairs PLot}
+baked_EDA %>%
+  select(churn, points_in_wallet, age, avg_time_spent, avg_transaction_value) %>%
+  ggpairs(.,aes(color = churn),
+          lower = list(continuous = wrap("smooth",
+                                         alpha = 0.25,
+                                         size = 0.2)))
+```
+
+#### 3.3.2 Correlation Matrix
+
+```{r Correlation Matrix}
+baked_EDA %>% 
+  mutate(churn = as.numeric(churn),
+         churn = ifelse(churn == "Yes", 1, 0)
+         ) %>% 
+  select(churn, where(is.numeric)) %>% 
+  as.matrix(.) %>% 
+  rcorr(.) %>% 
+  tidy(.) %>% 
+  mutate(absolute_corr = abs(estimate)
+  ) %>% 
+  rename(variable1 = column1,
+         variable2 = column2,
+         corr = estimate) %>% 
+  filter(variable1 == "churn" | variable2 == "churn") %>% 
+  datatable()
+```
+
+## 4. Predictive Model
+
+>We ran our predictive models using the machine learning steps of splitting, pre-processing, fitting, workflow, tuning, assessing, collecting metrics and predictions.
+
+>We ran and tested multiple models, from Random Forest to XG Boost, using different types of transformation techniques, ranging from up-sampling/down-sampling, BoxCox, ROSE, to Yeojohnson, as well as using logarithmic transformation on a few numeric variables. 
+
+>The top 4 resulting models were XG Boost with up-sampling, logistic regression, Random Forest with up-sampling, Random Forest with BoxCox. 
+
+### 4.1 Split
+
+> 80% of the samples have been considered for training and 20% of the samples have been considered for testing/validating.
+
+```{r setting seed and initial split}
+
+set.seed(100)
+churn_split <- churn_cleaned %>% 
+  initial_split(prop = 0.8, strata = churn)
+```
+
+> Execution
+
+```{r splitting into training and testing}
+churn_train <- churn_split %>% training() 
+churn_test <- churn_split %>% testing()
+```
+> Functions to build workflow, performance and prediction, confusion matrix, feature importance to execute repeatable actions in a more streamlined manner.
+
+```{r creating functions}
+## To generate the workflows
+## Input Parameters : recipe and model
+## Output Parameter : workflow object that combines the recipe and the model
+workflow_generator <- function(var_recipe, var_model)
+{
+    workflow() %>% 
+    add_recipe({var_recipe}) %>% 
+    add_model({var_model})
+}
+
+## To generate the performance of the model and the predictions of the test dataset using the model
+## Input Parameters : workflow object, tuned model object, and the dataset split object
+## Output Parameters :
+## 1. perf - performance of the model
+## 2. pred - predictions of the test dataset using the model
+perf_and_pred_generator <- function(var_workflow, var_tune, var_split)
+{
+  var_parameters <- {var_tune} %>% 
+    select_best(metric = "roc_auc")
+  
+  var_finalized_workflow <- {var_workflow} %>% 
+    finalize_workflow(var_parameters)
+  
+  var_fit <- var_finalized_workflow %>% 
+    last_fit(var_split)
+  
+  var_performance <- var_fit %>% 
+    collect_metrics()
+  
+  var_predictions <- var_fit %>% 
+    collect_predictions()
+  
+  return(list(perf = var_performance, pred = var_predictions))
+  
+}
+
+## To generate the confusion matrix based on the dataset and the model
+## Input Parameters : 
+## 1. dataset that contains predicted and actual values
+## 2. outcome that needs to be considered
+## 3. Title_name - title name for the confusion matrix
+
+## Output Parameters :
+## Confusion Matrix
+
+CM_builder <- function(data, outcome, title_name)
+{ 
+  {data} %>% 
+    conf_mat({outcome}, .pred_class) %>% 
+    pluck(1) %>% 
+    as_tibble() %>% 
+    mutate(cm_colors = ifelse(Truth == "Yes" & Prediction == "Yes", "True Positive",
+                              ifelse(Truth == "Yes" & Prediction == "No", "False Negative",
+                                     ifelse(Truth == "No" & Prediction == "Yes", 
+                                            "False Positive", 
+                                            "True Negative")
+                              )
+    )
+    ) %>% 
+    ggplot(aes(x = Prediction, y = Truth)) + 
+    geom_tile(aes(fill = cm_colors), show.legend = F) +
+    scale_fill_manual(values = c("True Positive" = "green",
+                                 "False Negative" = "red",
+                                 "False Positive" = "red",
+                                 "True Negative" = "green")
+    ) + 
+    geom_text(aes(label = n), color = "white", size = 10) + 
+    geom_label(aes(label = cm_colors), vjust = 2
+    ) + 
+    theme_fivethirtyeight() + 
+    theme(axis.title = element_text()
+    )  + 
+   labs(title = {title_name})
+}
+
+## To extract the feature importance of a particular model
+## Input Parameters : finalized workflow object, complete dataset
+## Output Parameters : feature importance plot
+
+feature_importance_extractor <- function(workflow_data, full_dataset)
+{
+  finalized_model <- {workflow_data} %>% fit({full_dataset})
+  
+  model_summary <- pull_workflow_fit(finalized_model)$fit
+  
+  feature_importance <- data.frame(importance = model_summary$variable.importance) %>% 
+    rownames_to_column("feature") %>% 
+    as_tibble() %>% 
+    mutate(feature = as.factor(feature)) 
+  
+  feature_importance %>% 
+    ggplot(aes(x = importance, y = reorder(feature, importance), fill = importance)) +
+    geom_col(show.legend = F) +
+    scale_fill_gradient(low = "deepskyblue1", high = "deepskyblue4") +
+    scale_x_continuous(expand = c(0, 0)) +
+    labs(
+      y = NULL,
+      title = "Feature (Variable) Importance for Churn Prediction") + 
+    ggthemes::theme_fivethirtyeight()
+}
+```
+
+
+### 4.2 Pre-Process
+
+> Feature Engineering
+
+* We created two recipes to indicate what predictors would be used to predict churn, namely **recipe_common**, which contains 8 predictors, and **recipe_all**, which contains all the predictors in the dataset. 
+
+* For applying the transformation techniques, we created separate recipes for BoxCox, Upsampling, Downsampling, which would be used along with the two recipes mentioned above.
+
+```{r creating recipes}
+recipe_common <- recipe(churn ~ age + avg_time_spent + points_in_wallet + 
+                          days_since_joining + avg_transaction_value +
+                          membership_category + 
+                          avg_frequency_login_days_interval + gender,
+                        data = churn_train)
+
+recipe_all <- 
+  recipe(churn ~ . ,
+         data = churn_train)
+
+recipe_norm_dummy <- 
+  recipe_common %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+
+
+recipe_boxcox <- 
+  recipe_common %>% 
+  step_BoxCox(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
+  step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
+  step_poly(points_in_wallet, degree = 2, role = "predictor")
+
+  
+recipe_up <-   
+  recipe_common %>% 
+  step_upsample(churn) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(terms = ~ avg_transaction_value:starts_with("membership_category")) %>% 
+  step_poly(avg_transaction_value, degree = 2, role = "predictor") %>% 
+  step_poly(points_in_wallet, degree = 2, role = "predictor")
+
+recipe_up_all <- 
+  recipe_all %>% 
+  step_upsample(churn) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+```
+
+### 4.3 Creating the model objects
+
+```{r craeting the model objects}
+## Logistic Regression Model ----
+model_glm <- 
+  logistic_reg(mode = "classification") %>% 
+  set_engine("glm") 
+## RF Model ----
+model_RF <- 
+  rand_forest() %>% 
+  set_args(mtry = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+
+## XG Boost Model ----
+model_xgb <- 
+  boost_tree(trees = 1000,
+             mtry = tune(),
+             min_n = tune(),
+             tree_depth = tune(),
+             sample_size = tune(),
+             learn_rate = tune()
+  ) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+
+##NULL Model
+model_null <- null_model() %>% 
+  set_engine("parsnip") %>% 
+  set_mode("classification")
+```
+
+### 4.4 Creating the workflow objects
+
+```{r creating the workflows}
+workflow_null <- workflow_generator(recipe_norm_dummy,model_null)
+
+## Logistic Regression 
+workflow_glm <- workflow_generator(recipe_norm_dummy, model_glm)
+
+## RF Model with upsampling
+workflow_RF_up <- workflow_generator(recipe_up, model_RF)
+
+## RF Model with upsampling and all predictors
+workflow_RF_up_all <- workflow_generator(recipe_up_all, model_RF)
+
+## RF Model with BoxCox
+workflow_RF_boxcox <- workflow_generator(recipe_boxcox, model_RF)
+
+
+## XG Boost Model with upsampling
+workflow_xg_up <- workflow_generator(recipe_up, model_xgb)
+```
+
+### 4.5 Creating the cross validation sets and tuning parameters
+
+> Cross-validation (CV_10)
+
+```{r creating the cross validation sets}
+###Cross Validation
+set.seed(100)
+CV_10 <- churn_train %>% 
+  vfold_cv(v = 10, strata = churn)
+
+###Tuning Parameters
+grid_RF <- expand.grid(mtry = c(3,4,5))
+
+grid_XG <-
+  grid_max_entropy(
+    mtry(c(5L, 10L),
+    ),
+    min_n(c(10L, 40L)
+    ),
+    tree_depth(c(5L, 10L)
+    ),
+    sample_prop(c(0.5, 1.0)
+    ),
+    learn_rate(c(-2, -1)
+    ),
+    size = 20
+  )
+```
+
+### 4.6 Tuning
+
+> Parallel Processing (for faster computation)
+
+```{r Parallel Processing}
+registerDoParallel()
+```
+
+```{r Null Model}
+### NULL
+set.seed(100)
+fit_null <- 
+  workflow_null %>% 
+  fit_resamples(CV_10,
+                control = control_resamples(save_pred = T))
+```
+```{r Logistic Regression}
+### Logistic Regressioin
+set.seed(100)
+tuned_glm <- 
+  workflow_glm %>% 
+  tune::tune_grid(resamples = CV_10,
+                  metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+```
+```{r Random Forrest with upsampliong}
+### Random Forest with upsampling
+set.seed(100)
+tuned_RF_up <- workflow_RF_up %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+```
+```{r Random Forrest with upsampling and all predictors}
+### Random Forest with upsampling and all predictores
+set.seed(100)
+tuned_RF_up_all <- workflow_RF_up_all %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+```
+```{r Random Forrest with BoxCox}
+#### Random Forest with BoxCox
+set.seed(100)
+tuned_RF_boxcox <- workflow_RF_boxcox %>% 
+  tune::tune_grid(resamples = CV_10,
+                  grid = grid_RF,
+                  metrics = metric_set(accuracy, roc_auc, f_meas))
+```
+
+
+```{r Setting a separate chunk for XGBoost due to performance issues}
+set.seed(100)
+### XGBoost with upsampling
+tuned_xg_up <- 
+  workflow_xg_up %>% 
+  tune_grid(resamples = CV_10,
+            grid = grid_XG,
+            control = control_grid(save_pred = T),
+            metrics = metric_set(accuracy, roc_auc, f_meas)
+  )
+```
+
+### 4.7 Selecting best model and collecting predictions
+
+```{r Best Model}
+### NULL
+performance_null <- fit_null %>% collect_metrics()
+predictions_null <- fit_null %>% collect_predictions()
+
+
+# Logistic Regression
+perf_and_pred <- perf_and_pred_generator(workflow_glm, tuned_glm, churn_split)
+performance_glm <- perf_and_pred$perf
+predictions_glm <- perf_and_pred$pred
+
+# Random Forest with Upsampling 
+perf_and_pred <- perf_and_pred_generator(workflow_RF_up, tuned_RF_up, churn_split)
+performance_RF_up <- perf_and_pred$perf
+predictions_RF_up <- perf_and_pred$pred
+
+# Random Forest with Upsampling and all predictors 
+perf_and_pred <- perf_and_pred_generator(workflow_RF_up_all, tuned_RF_up_all, churn_split)
+performance_RF_up_all <- perf_and_pred$perf
+predictions_RF_up_all <- perf_and_pred$pred
+
+# Random Forest with BoxCox
+perf_and_pred <- perf_and_pred_generator(workflow_RF_boxcox, tuned_RF_boxcox, churn_split)
+performance_RF_boxcox <- perf_and_pred$perf
+predictions_RF_boxcox <- perf_and_pred$pred
+
+# XGBoost with Upsampling
+perf_and_pred <- perf_and_pred_generator(workflow_xg_up, tuned_xg_up, churn_split)
+performance_xg_up <- perf_and_pred$perf
+predictions_xg_up <- perf_and_pred$pred
+```
+
+> Comparing Model Performance (metrics)
+
+```{r Comparing 4 models}
+predictions_null <- predictions_null %>% 
+  mutate(model = "Null model")
+predictions_glm <- predictions_glm %>% 
+  mutate(model = "Logistic Regression")
+predictions_RF_up <- predictions_RF_up %>% 
+  mutate(model = "Random Forest with Upsampling")
+predictions_RF_up_all <- predictions_RF_up_all %>% 
+  mutate(model = "Random Forest with Upsampling and all predictors")
+predictions_RF_boxcox <- predictions_RF_boxcox %>% 
+  mutate(model = "Random Forest with BoxCox")
+predictions_xg_up <- predictions_xg_up %>% 
+  mutate(model = "XGBoost with Upsampling")
+
+performance_glm <- performance_glm %>% 
+  mutate(model = "Logistic Regression")
+performance_RF_up <- performance_RF_up %>% 
+  mutate(model = "Random Forest with Upsampling")
+performance_RF_up_all <- performance_RF_up_all %>% 
+  mutate(model = "Random Forest with Upsampling and all predictors")
+performance_RF_boxcox <- performance_RF_boxcox %>% 
+  mutate(model = "Random Forest with BoxCox")
+performance_xg_up <- performance_xg_up %>% 
+  mutate(model = "XGBoost with Upsampling")
+
+
+comparing_models <- bind_rows(performance_glm,
+          performance_RF_up,
+          performance_RF_up_all,
+          performance_RF_boxcox,
+          performance_xg_up) %>%
+  select(-.estimator, -.config) %>%
+  pivot_wider(names_from = .metric,
+              values_from = .estimate) %>%
+  datatable() %>%
+  formatRound(columns = c("accuracy", "roc_auc"),
+              digits = 2)
+comparing_models
+```
+
+> Confusion Matrix
+
+```{r Confusion Matrix}
+CM_null <- CM_builder(predictions_null, "churn", predictions_null$model[1])
+CM_glm <- CM_builder(predictions_glm, "churn", predictions_glm$model[1])
+CM_RF_Up <- CM_builder(predictions_RF_up, "churn", predictions_RF_up$model[1])
+CM_RF_Up_all <- CM_builder(predictions_RF_up_all, "churn", predictions_RF_up_all$model[1])
+CM_RF_boxcox <- CM_builder(predictions_RF_boxcox,"churn", predictions_RF_boxcox$model[1])
+CM_xg_Up <- CM_builder(predictions_xg_up, "churn", predictions_xg_up$model[1])
+grid.arrange(CM_null, CM_glm,CM_RF_Up,CM_RF_Up_all,CM_RF_boxcox,CM_xg_Up)
+```
+
+> Comparing Model Performances (ROC-AUC Curve)
+
+```{r Comparing model performances}
+comparing_predictions <- bind_rows(predictions_glm,
+          predictions_RF_up,
+          predictions_RF_up_all,
+          predictions_RF_boxcox,
+          predictions_xg_up)
+```
+
+
+```{r ROC AUC Curve}
+comparing_predictions %>% 
+  group_by(model) %>% 
+  roc_curve(truth = churn,
+            .pred_Yes) %>% 
+  autoplot() +
+  ggthemes::scale_color_wsj() +
+  labs(title = "Comparisons of Predictive Power\nbetween models for Stroke",
+       subtitle = "Random Forest and XGBoost similar result but XGBoost with upsampling provides better recall",
+       color = "Prediction Tools") +
+  theme(legend.position = c(.65, .15))
+```
+
+> Feature Importance
+
+> We observe that top 3 features are points in wallet, membership category and average transaction value. 
+
+```{r}
+finalized_parameters <- tuned_xg_up %>% select_best(metric = "roc_auc")
+finalized_workflow <- workflow_xg_up %>%finalize_workflow(finalized_parameters)
+finalized_model <- finalized_workflow %>% fit(churn_cleaned)
+
+finalized_model %>% 
+  extract_fit_parsnip() %>% # pull_workflow_fit()
+  vip(aesthetic = list(fill = "deepskyblue4",
+                       alpha = 0.50)
+      ) +
+  labs(
+    y = NULL,
+    title = "Feature (Variable) Importance for Predicting Churn",
+    subtitle = "Points in wallet has the highest importance")
+```
+
+> Deploy Machine Learning Algorithm to Dashboard
+
+```{r saving the finalized model for dashboard}
+finalized_model %>% saveRDS("finalized_churn_prediction_model.rds")
+```
+
+> Save R Data
+
+```{r saving the RData}
+save.image("GroupProject.RData")
+```
+
+### 4.8 Shiny Dashboard
+
+> The finalized model was deployed as a Shiny dashboard and is hosted at [dashboard link](https://mgmt655-neck.shinyapps.io)
+
+> The meaning of the URL is the first letter of our first names. 
+
+## 5. Executive Summary
+
+### 5.1 Evidence
+
+* We tested 5 models for this predictive modelling task.
+
+* Our first model ‘Random Forest with upsampling and all predictors’ upsampled the minority class of the non-churn members, and included all variables for consideration, leaving out names and IDs, as they did not include relevant and usable data. 
+
+* Based on the correlation data, we found that the most important features were **age**, **average time spent**, **points in wallet**, **age with company**, **average transaction value**, **membership category**, **average frequency login days interval**, and **gender**. 
+
+* As a result, we selected these features when building the next 4 models for prediction, as the remaining variables did not have a sufficient impact in predicting Churn, which is our dependent variable. 
+
+* Our 4 models for prediction were ‘Logistic Regression’, ‘ Random Forest with Upsampling’, ‘Random Forest with BoxCox’, and ‘XGBoost with Upsampling’. For all relevant models, upsampling was performed to ensure a more representative distribution of actual churn values.
+
+* Of the 5 models, we found that ‘XGBoost with Upsampling’ and ‘Random Forest with Upsampling’ had the best results, with roc_auc value of **0.96**, and accuracy of **0.88**. The remaining models also performed well but had slightly poorer results. This indicated that our selection of features was able to predict the Churn likelihood well, and the results were reliable for prediction and applicable for future use. 
+
+* Between ‘XGBoost with Upsampling’ and ‘Random Forest with Upsampling’, we decided to select ‘XGBoost with Upsampling’ as the final model. There are 2 reasons for this. First, upon running the confusion matrix, we see that ‘XGBoost with Upsampling’ returned the lowest number of false negatives. Second, ‘XGBoost with Upsampling’ also had the highest recall score among the 5 models, indicating the model was the best among the 5.  
+
+* The top three variables that had the highest importance on the prediction results are **points in wallet **, followed by **membership category** and **average transaction value**.
+
+### 5.2 Interpretation
+
+* `XG Boost Algorithm` performed better overall with a roc_auc of **0.96** and accuracy of **0.88**, giving a 12% chance of error.
+
+* The model focused on 8 variables that have the largest effect on predicting churn based on the feature importance graph. 
+
+* This implies the significance of focusing on the most important features during the predictive modelling task, and also research on interaction between variables to achieve optimal performance.
+
+* The top three variables that had the highest importance on the prediction results are **points in wallet**, followed by **membership category** and **average transaction value**.
+
+### 5.3. Recommendations
+
+
+## Limitations
+
+* This model can only be applied to platforms that have a rewards programme. 
+
+* By stratifying the membership into discrete columns instead of yes/no, the model cannot be applied in the same way to other platforms with different category ranges. 
+
+* Age may not be the best indicator to predict spending capability, as it fails to include
+interaction with other factors such as willingness to spend.
+
+## References
+
+-   [Kaggle Data](https://www.kaggle.com/datasets/imsparsh/churn-risk-rate-hackerearth-ml)
+
+## Appendix
+
+-   Nil.
+
+## Contribution Statement
+
+> Our self-formed team worked together to deliver the group assignment. Together we defined the problem, identifed the data source and segregated tasks to deliver the final output.
+
+\***Tech Lead** was `Chandrasekar VENKATARAMAN`
+
+\***Scrum Master** was `Do Hoang Yen LE (Kristie)`
+
+\***Business Analyst** was `Emmanuel RICHARD`
+
+\***Business Analyst 2** was `Na HUANG`
+
+> `Chandrasekar VENKATARAMAN` contributions:
+
+1)  Collaborated with teammate to formulate the business problem.
+
+2)  Conducted research to discover interaction between variables.
+
+3)  Created and developed the R-script -- Transform & EDA, Split, Pre-process, Fit, Tune and Assess.
+
+4)  Analyzed data to identify top variables that impact churn
+
+5)  Designed recipes and tested to find the best model with highest roc_auc/accuracy score.
+
+6)  Finalized the models and tested model on Dashboard.
+
+> `Do Hoang Yen LE (Kristie)` contributions:
+
+1) Partnered with teammate to draft the Executive summary -- Evidence, Interpretation and Recommendations.
+
+2) Finalized the RMarkdown and contributed to the Business Question and univariate and multivariate analysis.
+
+3) Contributed to the proposal and the pitch deck
+
+> `Emmanuel RICHARD` contributions:
+
+1) Created the pitch deck for the proposal and submit.
+
+2) Contributed to the RMarkdown with the Executive Summary, Interpretations and Recommendations.
+
+> `Na HUANG` contributions: 
+
+1) Contributed to the univariate and multivariate analysis in the RMarkdown
+
+2) Contributed to the Business question in the RMarkdown. 
+
+<br>
